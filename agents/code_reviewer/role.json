@@ -1,0 +1,27 @@
+{
+  "id": "code_reviewer",
+  "title": "Code reviewer",
+  "worker": true,
+  "sandbox": "read-only",
+  "write_scope": [],
+  "triggers": [
+    "new developer snapshot",
+    "repaired snapshot"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

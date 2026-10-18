@@ -1,0 +1,28 @@
+{
+  "id": "qa",
+  "title": "Independent QA",
+  "worker": true,
+  "sandbox": "danger-full-access",
+  "write_scope": [
+    "local test output only"
+  ],
+  "triggers": [
+    "code review passed for current snapshot"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

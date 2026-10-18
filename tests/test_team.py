@@ -1,0 +1,445 @@
+"""Deterministic coordinator contracts; no model or production calls."""
+import json
+import io
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import team
+
+
+def report(status='passed', findings=None):
+    return {'status': status, 'summary': 'Deterministic test evidence',
+            'evidence': ['Verified fixture'], 'findings': findings or [], 'limitations': [], 'capability_requests': [],
+            'next_action': 'Continue the reviewed workflow'}
+
+
+class TeamTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.project = Path(self.temp.name)
+        self.home = self.project / 'agent-team'
+        self.home.mkdir()
+        config = json.loads((Path(team.__file__).parent / 'team.json').read_text(encoding='utf-8-sig'))
+        config['auto_commit'] = False
+        config['qa_owns_environment'] = False
+        config['max_calls_per_delivery'] = 1000
+        team.save(self.home / 'team.json', config)
+        self.write('.gitignore', '.supervisor/\n')
+        self.write('tasks.md', '- [ ] **T1 Work** | todo | Dependencies: None.\n')
+        self.write('app.txt', 'original\n')
+        self.git('init', '-q')
+        self.git('config', 'user.name', 'Fixture')
+        self.git('config', 'user.email', 'fixture@example.invalid')
+        self.git('config', 'commit.gpgsign', 'false')
+        self.git('config', 'core.hooksPath', str(self.project / 'no-hooks'))
+        self.git('add', '.')
+        self.git('commit', '-qm', 'Fixture baseline')
+        self.roles = []
+        self.responses = {}
+        self.effects = {}
+        self.controller = team.Team(self.project, self.home, runner=self.run_role)
+        self.patch = patch.object(team, 'competing_processes', return_value=[])
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def write(self, name, text):
+        path = self.project / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+
+    def git(self, *args):
+        return subprocess.run(['git', '-C', str(self.project), *args], check=True,
+                              capture_output=True).stdout
+
+    def run_role(self, role):
+        self.roles.append(role)
+        if role in self.effects:
+            self.effects[role]()
+        return self.responses.get(role, report('completed' if role in {'planner', 'developer'} else 'passed'))
+
+    def adopted(self):
+        self.write('app.txt', 'owner changes\n')
+        self.controller.initialize(adopt=True)
+
+    def approvals(self):
+        self.adopted()
+        for _ in range(3):
+            self.controller.step()
+        self.assertEqual(self.roles, team.GATES)
+        self.assertEqual(self.controller.state['stage'], 'ready_for_commit')
+        return self.controller.state['snapshot']
+
+    def test_dirty_initialization_requires_explicit_adoption(self):
+        self.write('app.txt', 'owner changes')
+        with self.assertRaisesRegex(RuntimeError, 'adopt-dirty'):
+            self.controller.initialize()
+        self.controller.initialize(adopt=True)
+        self.assertTrue(self.controller.state['adopted_dirty'])
+        self.assertEqual(self.controller.state['stage'], 'code_reviewer')
+        self.assertEqual(self.git('log', '--format=%s').decode().strip(), 'Fixture baseline')
+
+    def test_gate_order_and_exact_fingerprint(self):
+        expected = self.approvals()
+        for role in team.GATES:
+            receipt = self.controller.state['receipts'][role]
+            self.assertEqual(receipt['snapshot'], expected)
+            self.assertEqual(receipt['report']['status'], 'passed')
+
+    def test_source_change_invalidates_all_previous_approvals(self):
+        old = self.approvals()
+        self.write('app.txt', 'changed after review')
+        self.controller.step()
+        self.assertEqual(self.roles[-1], 'code_reviewer')
+        self.assertEqual(set(self.controller.state['receipts']), {'code_reviewer'})
+        self.assertNotEqual(self.controller.state['snapshot'], old)
+
+    def test_read_only_and_qa_edits_rejected(self):
+        self.adopted()
+        for role in [*team.READ_ONLY, 'qa']:
+            with self.subTest(role=role):
+                self.effects[role] = lambda r=role: self.write('app.txt', r)
+                self.controller.persist(snapshot=team.snapshot(self.project)['fingerprint'])
+                with self.assertRaisesRegex(RuntimeError, 'changed source'):
+                    self.controller.execute(role)
+                self.assertNotIn(role, self.controller.state.get('receipts', {}))
+
+    def test_planner_may_only_edit_valid_task_graph(self):
+        self.controller.initialize()
+        self.effects['planner'] = lambda: self.write('tasks.md', '- [ ] **T2 Planned work** | todo | Dependencies: None.\n')
+        self.controller.execute('planner')
+        self.assertEqual(team.backlog(self.project)[1], ['T2'])
+        self.effects['planner'] = lambda: self.write('app.txt', 'unauthorized')
+        with self.assertRaisesRegex(RuntimeError, 'outside tasks.md'):
+            self.controller.execute('planner')
+
+    def test_retry_budget_stops_repeated_gate_rejections(self):
+        self.adopted()
+        self.responses['code_reviewer'] = report('changes_requested', ['Fix demonstrated failure'])
+        for _ in range(self.controller.config['max_fix_attempts'] + 1):
+            self.controller.execute('code_reviewer')
+        self.assertEqual(self.controller.state['stage'], 'technical_lead')
+        self.assertEqual(self.controller.state['strategy_failure']['kind'], 'source_repair')
+
+    def test_new_qa_issue_has_its_own_budget_despite_old_total(self):
+        self.adopted()
+        self.controller.persist(attempts=99)
+        for finding in ['Repair authorization in app.ts:12', 'Repair Turkish disclosure in rooms.tsx:146', 'Repair delivery receipt in messages.tsx:84']:
+            self.responses['qa'] = report('changes_requested', [finding])
+            self.controller.execute('qa')
+            self.assertEqual(self.controller.state['stage'], 'developer')
+            self.assertEqual(self.controller.state['attempts'], 1)
+
+    def test_repeated_issue_is_not_reset_by_an_additional_finding_or_line_change(self):
+        self.adopted()
+        for i in range(self.controller.config['max_fix_attempts'] + 1):
+            self.responses['qa'] = report('changes_requested', ['Fix authorization in app.ts:' + str(10+i), 'Separate issue ' + str(i)])
+            self.controller.execute('qa')
+        self.assertEqual(self.controller.state['stage'], 'technical_lead')
+        self.assertEqual(self.controller.state['attempts'], 3)
+
+    def test_source_repair_strategy_returns_to_developer_without_qa_approval(self):
+        self.adopted()
+        self.controller.persist(stage='technical_lead', strategy_failure={'kind':'source_repair'})
+        plan={'snapshot':self.controller.state['snapshot'],'kind':'source_repair','instructions':'Test the actual translator key normalization before changing the catalog.','evidence':['Existing lookup trims whitespace.']}
+        self.effects['technical_lead'] = lambda: team.save(self.controller.folder / 'recovery-plan.json', plan)
+        self.responses['technical_lead'] = report('completed')
+        self.controller.execute('technical_lead')
+        self.assertEqual(self.controller.state['stage'], 'developer')
+        self.assertEqual(self.controller.state['attempts'], 0)
+        self.assertNotIn('qa', self.controller.state['receipts'])
+        self.assertEqual(self.controller.state['repair_strategy'], plan)
+
+    def test_call_budget_prevents_another_worker(self):
+        self.adopted()
+        self.controller.persist(calls=self.controller.config['max_calls_per_start'])
+        self.controller.step()
+        self.assertEqual(self.roles, [])
+        self.assertEqual(self.controller.state['stage'], 'needs_attention')
+
+    def test_blocked_planner_keeps_intake_unconsumed(self):
+        self.controller.initialize()
+        team.save(self.controller.folder / 'inbox' / 'owner.json', {'text': 'Preserve this request'})
+        self.responses['planner'] = report('blocked')
+        self.controller.step()
+        self.assertEqual(self.controller.state['stage'], 'needs_attention')
+        self.assertEqual(len(self.controller.inputs()), 1)
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner'])
+        self.assertEqual(self.controller.state['seen_inputs'], [])
+        self.responses['planner'] = report('completed')
+        self.controller.persist(stage='planner')
+        self.controller.step()
+        self.assertEqual(self.controller.inputs(), [])
+
+    def test_stale_commit_denied_without_changing_existing_index(self):
+        expected = self.approvals()
+        self.write('app.txt', 'unreviewed')
+        self.git('add', 'app.txt')
+        before = self.git('diff', '--cached', '--binary')
+        with self.assertRaisesRegex(RuntimeError, 'exact reviewed snapshot'):
+            self.controller.commit(expected, 'Do not commit stale source')
+        self.assertEqual(self.git('diff', '--cached', '--binary'), before)
+
+    def test_current_commit_preserves_owner_staged_changes(self):
+        expected = self.approvals()
+        self.git('add', 'app.txt')
+        before = self.git('diff', '--cached', '--binary')
+        with self.assertRaisesRegex(RuntimeError, 'Index already'):
+            self.controller.commit(expected, 'Preserve owner index')
+        self.assertEqual(self.git('diff', '--cached', '--binary'), before)
+
+    def test_manual_commit_requires_every_gate_then_records_local_head(self):
+        expected = self.approvals()
+        qa = self.controller.state['receipts'].pop('qa')
+        with self.assertRaisesRegex(RuntimeError, 'Missing current qa'):
+            self.controller.commit(expected, 'Reviewed fixture change')
+        self.controller.state['receipts']['qa'] = qa
+        head = self.controller.commit(expected, 'Reviewed fixture change')
+        self.assertEqual(self.git('rev-parse', 'HEAD').decode().strip(), head)
+        self.assertEqual(self.controller.state['stage'], 'release_ready')
+        self.assertEqual(self.git('status', '--porcelain'), b'')
+        self.assertEqual(self.git('remote'), b'')
+
+    def test_owner_stop_prevents_execution_and_requires_explicit_resume(self):
+        self.controller.initialize()
+        self.controller.stop.write_text('Owner stop', encoding='utf-8')
+        with self.assertRaises(InterruptedError):
+            self.controller.execute('developer')
+        with self.assertRaisesRegex(RuntimeError, 'Owner STOP'):
+            self.controller.acquire()
+        self.assertEqual(self.roles, [])
+        self.controller.acquire(resume=True)
+        self.assertFalse(self.controller.stop.exists())
+        self.controller.release()
+
+    def test_invalid_task_graphs_rejected(self):
+        cases = {
+            'cycle': '- [ ] **T1 Work** | todo | Dependencies: T2.\n- [ ] **T2 Work** | todo | Dependencies: T1.\n',
+            'missing': '- [ ] **T1 Work** | todo | Dependencies: T9.\n',
+            'duplicate': '- [ ] **T1 Work** | todo | Dependencies: None.\n' * 2,
+            'checkbox': '- [x] **T1 Work** | todo | Dependencies: None.\n',
+        }
+        for name, contents in cases.items():
+            with self.subTest(name=name):
+                self.write('tasks.md', contents)
+                with self.assertRaises(ValueError):
+                    team.backlog(self.project)
+
+    def test_report_validation_rejects_missing_evidence_and_false_pass(self):
+        bad = report()
+        bad['evidence'] = []
+        with self.assertRaises(ValueError):
+            team.validate_report(bad, 'qa')
+        with self.assertRaises(ValueError):
+            team.validate_report(report(findings=['Unresolved failure']), 'qa')
+        with self.assertRaises(ValueError):
+            team.validate_report({**report(), 'extra': True}, 'qa')
+        self.assertEqual(team.validate_report(report('blocked'), 'qa')['status'], 'blocked')
+
+    def test_developer_cannot_modify_controller_policy(self):
+        self.controller.initialize()
+        self.effects['developer'] = lambda: self.write('agent-team/team.json', '{}')
+        with self.assertRaisesRegex(RuntimeError, 'protected team policy'):
+            self.controller.execute('developer')
+
+    def test_gate_race_restarts_review_without_running_worker(self):
+        self.adopted()
+        self.controller.execute('code_reviewer')
+        self.write('app.txt', 'race between schedule and gate')
+        self.controller.execute('qa')
+        self.assertEqual(self.roles, ['code_reviewer'])
+        self.assertEqual(self.controller.state['stage'], 'code_reviewer')
+        self.assertEqual(self.controller.state['receipts'], {})
+
+    def test_operations_requires_repeated_failures_and_routes_findings_to_planner(self):
+        self.controller.initialize()
+        self.controller.config['operations_interval_seconds'] = 0
+        with patch.object(team.urllib.request, 'urlopen', side_effect=OSError('offline fixture')):
+            self.controller.check_operations()
+            self.assertFalse(self.controller.state.get('pending_operations', False))
+            self.controller.check_operations()
+        self.assertTrue(self.controller.state['pending_operations'])
+        self.responses['operations'] = report('changes_requested', ['Public readiness unavailable twice'])
+        self.controller.step()
+        self.assertEqual(self.roles, ['operations'])
+        self.assertEqual(self.controller.state['stage'], 'planner')
+        self.assertFalse(self.controller.state['pending_operations'])
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.return_value = b'{"status":"ready","release":"fixture"}'
+        with patch.object(team.urllib.request, 'urlopen', return_value=response):
+            self.controller.check_operations()
+        self.assertEqual(self.controller.state['health_failures'], 0)
+        self.assertFalse(self.controller.state['health_incident_open'])
+
+    def worker_metadata(self):
+        role_dir = self.home / 'agents' / 'qa'
+        role_dir.mkdir(parents=True)
+        team.save(role_dir / 'role.json', {'id': 'qa', 'worker': True, 'sandbox': self.controller.worker_sandbox('qa')})
+        (role_dir / 'prompt.md').write_text('Return test evidence only.', encoding='utf-8')
+
+    def test_failed_cli_turn_rejects_even_valid_output_report(self):
+        self.worker_metadata()
+        fake = unittest.mock.MagicMock()
+        fake.pid = 123456
+        fake.stdout = io.StringIO('{"type":"turn.failed","error":{"message":"fixture failure"}}\n')
+        fake.stdin = io.StringIO()
+        fake.returncode = 1
+        fake.poll.return_value = 1
+
+        def spawn(args, **kwargs):
+            team.save(Path(args[args.index('-o') + 1]), report())
+            return fake
+
+        with patch.object(team.shutil, 'which', return_value='fake-codex'), patch.object(team.subprocess, 'Popen', side_effect=spawn), patch.object(team, 'attach_worker_job', return_value=None):
+            with self.assertRaisesRegex(RuntimeError, 'CLI failed'):
+                self.controller.run_worker('qa')
+        self.assertIsNone(self.controller.state['worker_pid'])
+
+    def test_quiet_worker_observes_stop_and_timeout(self):
+        self.worker_metadata()
+        self.controller.config['stop_grace_seconds'] = 0
+        self.controller.config['worker_timeout_seconds'] = -1
+        fake = unittest.mock.MagicMock()
+        fake.pid = 123456
+        fake.stdin = io.StringIO()
+        fake.stdout = io.StringIO('')
+        fake.returncode = None
+        with patch.object(team.shutil, 'which', return_value='fake-codex'), patch.object(team.subprocess, 'Popen', return_value=fake), patch.object(team, 'terminate_owned') as terminate, patch.object(team, 'attach_worker_job', return_value=None):
+            with self.assertRaisesRegex(TimeoutError, 'deadline'):
+                self.controller.run_worker('qa')
+            terminate.assert_called_once_with(fake)
+            self.controller.stop.write_text('Owner stop', encoding='utf-8')
+            fake.stdin = io.StringIO()
+            with self.assertRaises(InterruptedError):
+                self.controller.run_worker('qa')
+        self.assertIsNone(self.controller.state['worker_pid'])
+
+    def test_publication_refuses_wrong_stage_commit_and_dirty_snapshot(self):
+        expected = self.approvals()
+        head = self.controller.commit(expected, 'Reviewed fixture change')
+        self.controller.persist(stage='ready_for_commit')
+        with self.assertRaisesRegex(RuntimeError, 'exact committed'):
+            self.controller.publish(head)
+        self.controller.persist(stage='release_ready')
+        with self.assertRaisesRegex(RuntimeError, 'exact committed'):
+            self.controller.publish('0' * 40)
+        self.write('app.txt', 'unreviewed release edit')
+        with self.assertRaisesRegex(RuntimeError, 'exact committed'):
+            self.controller.publish(head)
+        self.git('add', 'app.txt')
+        self.write('app.txt', 'owner changes\n')
+        staged = self.git('diff', '--cached', '--binary')
+        with self.assertRaisesRegex(RuntimeError, 'clean workspace'):
+            self.controller.publish(head)
+        self.assertEqual(self.git('diff', '--cached', '--binary'), staged)
+
+    def test_publication_sends_only_reviewed_head_to_expected_remote(self):
+        expected = self.approvals()
+        head = self.controller.commit(expected, 'Reviewed fixture change')
+        actual_git = team.git
+        calls = []
+
+        def safe_git(project, *args):
+            calls.append(args)
+            if args[:2] == ('remote', 'get-url'):
+                return b'https://github.com/bolatahmett/AfterDark.git\n'
+            if args[0] == 'ls-remote':
+                return (head + '\trefs/heads/main\n').encode()
+            if args[0] == 'push':
+                return b''
+            return actual_git(project, *args)
+
+        with patch.object(team, 'git', side_effect=safe_git):
+            self.assertEqual(self.controller.publish(head), head)
+        self.assertIn(('push', 'origin', head + ':refs/heads/main'), calls)
+        self.assertEqual(self.controller.state['stage'], 'published')
+
+    def test_failed_and_quota_stages_preserve_partial_edits_without_auto_review(self):
+        self.controller.initialize()
+        original = self.controller.state['snapshot']
+        for stage in ('needs_attention', 'waiting_for_quota'):
+            with self.subTest(stage=stage):
+                self.write('app.txt', 'retained partial edits ' + stage)
+                self.controller.persist(stage=stage, reason='Explicit retry required', snapshot=original)
+                self.controller.step()
+                self.controller.step()
+                self.assertEqual(self.controller.state['stage'], stage)
+                self.assertEqual(self.controller.state['snapshot'], original)
+                self.assertEqual(self.roles, [])
+                self.assertEqual((self.project / 'app.txt').read_text(encoding='utf-8'), 'retained partial edits ' + stage)
+
+    def test_loop_stop_interruption_preserves_work_and_requires_explicit_retry(self):
+        self.controller.initialize()
+
+        def interrupted_developer():
+            self.write('app.txt', 'partial work before owner stop')
+            self.controller.stop.write_text('Owner stop', encoding='utf-8')
+            raise InterruptedError('Owner STOP')
+
+        self.effects['developer'] = interrupted_developer
+        with patch.object(self.controller, 'check_operations') as health:
+            self.controller.loop(once=True)
+        health.assert_not_called()
+        self.assertEqual(self.controller.state['stage'], 'needs_attention')
+        self.assertEqual(self.controller.state['resume_role'], 'developer')
+        self.assertEqual(self.controller.state['controller_status'], 'stopped')
+        self.assertTrue(self.controller.stop.exists())
+        self.assertFalse(self.controller.lock.exists())
+        self.assertEqual((self.project / 'app.txt').read_text(encoding='utf-8'), 'partial work before owner stop')
+        self.controller.step()
+        self.assertEqual(self.roles, ['developer'])
+
+
+    def test_scoped_pass_accepts_limitations_but_still_rejects_real_findings(self):
+        for role in team.GATES:
+            with self.subTest(role=role):
+                scoped = report()
+                scoped['limitations'] = ['Physical-device checks are outside this source-review scope']
+                self.assertEqual(team.validate_report(scoped, role), scoped)
+                scoped['findings'] = ['Actual authorization failure at the reviewed path']
+                with self.assertRaisesRegex(ValueError, 'Unresolved findings'):
+                    team.validate_report(scoped, role)
+        legacy = report()
+        del legacy['limitations']
+        with self.assertRaisesRegex(ValueError, 'Invalid report fields'):
+            team.validate_report(legacy, 'code_reviewer')
+
+    def test_required_qa_acceptance_remains_blocked_with_limitations(self):
+        self.controller.initialize(adopt=False)
+        self.controller.persist(stage='qa')
+        blocked = report('blocked')
+        blocked['limitations'] = ['Required browser acceptance could not run']
+        self.responses['qa'] = blocked
+        self.controller.step()
+        self.assertEqual(self.controller.state['stage'], 'needs_attention')
+        self.assertEqual(self.controller.state['receipts'], {})
+
+    def test_issue_intake_rejects_control_only_text_and_preserves_normal_text(self):
+        for invalid in ('', ' \n\t ', '\x18', 'Visible\x00text', '\u200b', 'a' * 8001):
+            with self.subTest(text=repr(invalid[:30])):
+                with self.assertRaises(ValueError):
+                    team.validate_intake(invalid)
+        self.assertEqual(team.validate_intake('  Mobile issue\nSteps:\tclose the page  '), 'Mobile issue\nSteps:\tclose the page')
+
+    def test_missing_acceptance_hands_independent_ready_work_to_planner(self):
+        self.write('tasks.md', '- [ ] **T1 Work** | in_progress | Dependencies: None.\n- [ ] **T2 Other** | todo | Dependencies: None.\n')
+        self.controller.initialize(adopt=True)
+        self.controller.persist(stage='qa', task='T1')
+        self.responses['qa'] = report('blocked', ['Required authorized browser is unavailable'])
+        self.controller.step()
+        self.assertEqual(self.controller.state['stage'], 'planner')
+        self.assertEqual(self.controller.state['deferred_reports'][0]['task'], 'T1')
+        self.assertEqual(self.controller.state['receipts'], {})
+        self.assertEqual(self.roles, ['qa'])
+
+
+if __name__ == '__main__':
+    unittest.main()

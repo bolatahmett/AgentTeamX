@@ -1,0 +1,27 @@
+{
+  "id": "operations",
+  "title": "Operations observer",
+  "worker": true,
+  "sandbox": "read-only",
+  "write_scope": [],
+  "triggers": [
+    "bounded health observation",
+    "release verification request"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

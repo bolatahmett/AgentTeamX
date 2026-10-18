@@ -1,0 +1,28 @@
+{
+  "id": "ux_reviewer",
+  "title": "UX reviewer",
+  "worker": true,
+  "sandbox": "read-only",
+  "write_scope": [],
+  "triggers": [
+    "new user journey changes",
+    "scheduled review after source changes",
+    "owner UX report"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

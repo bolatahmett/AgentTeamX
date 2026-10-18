@@ -1,0 +1,28 @@
+{
+  "id": "supervisor",
+  "title": "Deterministic supervisor",
+  "worker": false,
+  "sandbox": "none",
+  "write_scope": [
+    "controller-owned runtime state"
+  ],
+  "triggers": [
+    "controller event loop"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

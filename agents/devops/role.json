@@ -1,0 +1,26 @@
+{
+  "id": "devops",
+  "title": "DevOps and release reviewer",
+  "worker": true,
+  "sandbox": "read-only",
+  "write_scope": [],
+  "triggers": [
+    "QA passed for current snapshot"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

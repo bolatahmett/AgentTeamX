@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "changes_requested",
+        "blocked",
+        "completed",
+        "clear"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "Actionable defects only. Use an empty array when none; unresolved gate findings require changes_requested, never passed. Put verification constraints in limitations.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "description": "Verification constraints and unrun checks; never actionable source defects. Required acceptance gaps still require blocked status.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_action": {
+      "type": "string"
+    },
+    "capability_requests": {
+      "type": "array",
+      "description": "Missing local tools/runtime that the system should provision. Only for blocked status; otherwise use []. Never use this for owner/legal/production approval.",
+      "items": {"type": "string", "enum": ["browser", "local_runtime", "build_tools"]}
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "evidence",
+    "findings",
+    "limitations",
+    "next_action",
+    "capability_requests"
+  ]
+}

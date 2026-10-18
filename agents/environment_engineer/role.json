@@ -1,0 +1,39 @@
+{
+  "id": "environment_engineer",
+  "title": "Environment engineer",
+  "worker": true,
+  "sandbox": "danger-full-access",
+  "write_scope": [
+    ".supervisor/team-v2/environment/**",
+    ".supervisor/team-v2/artifacts/environment_engineer/**",
+    ".tools/qa-browser/**"
+  ],
+  "triggers": [
+    "typed browser capability request",
+    "typed local_runtime capability request",
+    "typed build_tools capability request"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "tracked source changes",
+    "task changes",
+    "policy changes",
+    "controller changes",
+    "Git mutations",
+    "global installations",
+    "system security changes",
+    "secret access",
+    "production writes",
+    "push",
+    "deploy",
+    "publish",
+    "spending",
+    "concurrent writers"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "planner",
+  "title": "Product planner",
+  "worker": true,
+  "sandbox": "workspace-write",
+  "write_scope": [
+    "tasks.md"
+  ],
+  "triggers": [
+    "owner inbox",
+    "validated UX or QA findings",
+    "no implementation-ready task"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

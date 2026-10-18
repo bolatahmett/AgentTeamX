@@ -1,0 +1,32 @@
+{
+  "id": "developer",
+  "title": "Developer",
+  "worker": true,
+  "sandbox": "danger-full-access",
+  "write_scope": [
+    "assigned application source",
+    "targeted tests",
+    "related policy documents",
+    "tasks.md"
+  ],
+  "triggers": [
+    "ready task",
+    "bounded review or QA repair"
+  ],
+  "report_statuses": [
+    "passed",
+    "changes_requested",
+    "blocked",
+    "completed",
+    "clear"
+  ],
+  "prohibitions": [
+    "push",
+    "deploy",
+    "publish",
+    "secret access",
+    "production writes",
+    "controller changes",
+    "concurrent writers"
+  ]
+}

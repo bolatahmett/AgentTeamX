@@ -1,0 +1,17 @@
+{
+  "id": "technical_lead",
+  "title": "Technical lead and recovery coordinator",
+  "worker": true,
+  "sandbox": "danger-full-access",
+  "write_scope": [
+    ".supervisor/team-v2/recovery-plan.json",
+    ".supervisor/team-v2/artifacts/technical_lead/**"
+  ],
+  "triggers": ["local capability recovery failed", "ordered recovery prerequisites need diagnosis"],
+  "report_statuses": ["passed", "changes_requested", "blocked", "completed", "clear"],
+  "prohibitions": [
+    "application source changes", "task changes", "Git mutations", "policy changes",
+    "controller runtime changes", "secret retrieval", "global security changes",
+    "production writes", "push", "deploy", "publish", "spending", "concurrent writers"
+  ]
+}

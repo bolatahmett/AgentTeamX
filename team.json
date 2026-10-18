@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "poll_seconds": 15,
+  "worker_timeout_seconds": 1200,
+  "terminal_grace_seconds": 10,
+  "stop_grace_seconds": 5,
+  "max_fix_attempts": 2,
+  "environment_max_attempts": 2,
+  "max_calls_per_start": 24,
+  "ux_interval_hours": 24,
+  "operations_interval_seconds": 300,
+  "operations_url": "https://sohbetavlusu.com/api/v1/ready",
+  "auto_commit": true,
+  "allow_push": true,
+  "allow_deploy": true,
+  "codex": "codex",
+  "default_sandbox": "workspace-write",
+  "execution_sandboxes": {
+    "technical_lead": "danger-full-access",
+    "environment_engineer": "danger-full-access",
+    "qa": "danger-full-access",
+    "developer": "danger-full-access"
+  },
+  "strategy_max_attempts": 2,
+  "publication_authorization": "owner-2026-10-18",
+  "worker_inactivity_seconds": 600,
+  "qa_owns_environment": true,
+  "max_calls_per_delivery": 8,
+  "delivery_epoch": "focused-delivery-2026-10-18"
+}
