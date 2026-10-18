@@ -25,7 +25,7 @@ def failure_kind(error):
     text=str(error).lower()
     if any(x in text for x in ('quota_limit','out of credits','429')):return 'quota'
     if any(x in text for x in ('policy','permission','access denied','sandbox')):return 'policy'
-    if 'deadline' in text or 'timeout' in text:return 'timeout'
+    if any(x in text for x in ('deadline','timeout','timed out')):return 'timeout'
     if any(x in text for x in ('transport','connection reset','cli failed','no structured report')):return 'transport'
     if 'cleanup' in text:return 'cleanup'
     if 'build' in text:return 'build'

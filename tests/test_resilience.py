@@ -105,7 +105,7 @@ class ResilienceTests(unittest.TestCase):
         self.assertEqual(len(team.competing_processes(Path('C:/project'),inventory)),1)
 
     def test_failures_have_distinct_recovery_categories(self):
-        for text,kind in [('QUOTA_LIMIT','quota'),('permission denied','policy'),('Role deadline exceeded','timeout'),('CLI failed','transport'),('cleanup failed','cleanup'),('build failed','build'),('Invalid report','validation')]:
+        for text,kind in [('QUOTA_LIMIT','quota'),('permission denied','policy'),('Role deadline exceeded','timeout'),('Git timed out after -330 seconds','timeout'),('CLI failed','transport'),('cleanup failed','cleanup'),('build failed','build'),('Invalid report','validation')]:
             self.assertEqual(resilience.failure_kind(text),kind)
 
     def test_only_qa_can_reuse_unchanged_runtime_scope(self):
