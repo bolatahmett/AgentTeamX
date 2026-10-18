@@ -26,7 +26,18 @@ workers; these are not separate operating-system accounts or proof of credential
 isolation. Keep production secrets outside worker-readable project files. No worker
 may change its own policy, controller locks, STOP state, Git history or production.
 The supervisor is ordinary deterministic code, not another paid model invocation.
-The configured Codex session supplies its model; role names do not override it.
+Owner-approved role_models in team.json selects each worker's explicit CLI model
+and reasoning effort; unspecified policies retain the configured CLI default.
+Operations uses gpt-6-luna/low, routine DevOps gpt-6-luna/medium and UX review
+gpt-6-luna/medium. Planner uses gpt-6-sol/low; QA and environment preparation use
+gpt-6-sol/medium. Developer and code review use gpt-6.1-sol/medium; technical
+diagnosis uses gpt-6.1-sol/high. Active release-incident DevOps uses the stronger
+release_diagnostic_model because production failure diagnosis is not a routine
+checklist. Models and efforts were checked against the local CLI model catalog.
+These are task-fit choices, not a measured cost-saving percentage or quality
+guarantee. Gate schemas, source provenance, budgets and authorization are unchanged.
+worker_model_selected events and active_model record the requested routing.
+Unsupported models fail visibly; there is no silent premium-model retry.
 
 Owner-authorized local authority (2026-10-18): technical_lead, environment_engineer,
 QA and developer use the CLI full local access profile. Planner remains workspace
@@ -140,6 +151,11 @@ and continue useful independent work. Missing acceptance never becomes a passing
 gate. Source or policy failures and quota waits are not automatically retried.
 
 Stop and verify controller exit before retry, commit, publication or next batch.
+Retry recomputes the current source fingerprint. If maintenance or another owner
+repair changed it, retry always selects code_reviewer, including when the previous
+assignment was developer. Unchanged work retains its assigned role. This prevents
+an already-applied repair from being sent back for a no-change developer turn;
+current gates and persistent incident counters remain intact.
 The helper provides these actions. A local commit requires three current snapshot
 gates, no pre-existing staged changes, no sensitive-looking paths and no competing
 workers. The initial adopted work is never silently committed. Publication checks
@@ -185,6 +201,22 @@ owner-configured, not a retry with a policy-bypass flag.
 Reference: [official Codex CLI documentation](https://developers.openai.com/codex/cli/reference).
 
 ## Repair budgets
+
+## Owner-authorized delivery batches - 2026-10-18
+
+delivery_batches in team.json explicitly groups up to three dependency-ready
+source tasks. Scheduling passes their IDs and independently eligible delivered
+acceptance_tasks in context.delivery_batch. A source task with an unmet dependency
+is excluded, never silently waived. The primary task remains visible for existing
+monitoring; reports must identify each batch member and its own acceptance result.
+One developer turn produces the batch snapshot, followed by one review/QA/DevOps
+chain. QA owns one build/runtime/browser setup for the combined scenarios, using
+valid checkpoint outputs where possible, then cleans it up once. Failed scenarios
+receive focused repairs and affected regression checks; no unconditional full
+end-to-end run per child task. Documentation-only changes require document checks,
+not an application bootstrap. Exact-source gates, STOP, quota and persistent
+release-recovery budgets remain in force. Source work uses one shared existing
+delivery call budget per batch, rather than one budget per child.
 
 Source repair budgets are tracked per task and normalized individual finding,
 not by a task's cumulative review/QA rounds. Line numbers, whitespace and revision
@@ -253,7 +285,7 @@ No percentage or production acceptance is inferred from command completion.
 ## Independent release recovery budget
 
 Failed deployment observation schedules DevOps with a persistent release incident.
-Its ten-call recovery budget is separate from the eight-call product-delivery
+Its 40-call recovery budget is separate from the 24-call product-delivery batch
 budget and covers diagnosis, repair and required review/QA. Both ledgers survive
 controller restarts. A new candidate SHA does not reset an unresolved incident;
 only verified CI and matching healthy production SHA close it. All existing
@@ -261,3 +293,10 @@ source, commit and publication checks remain required. For a previously blocked
 exact recorded failed publication, stop workers and run
 `python agent-team/team.py recover-release`, then explicitly Resume. This command
 preserves owner STOP and all counters; it does not waive checks or publish.
+
+Owner-authorized budget increase (2026-10-18): 48 model calls per start,
+24 per delivery batch and 40 per persistent release incident. These are total
+role calls across diagnosis, repair and quality gates, not retries of one defect.
+Existing incident/delivery counters are retained when limits increase; the current
+incident at 10 calls therefore has 30 remaining. Repeated-source-finding limits,
+environment/strategy limits, quota pauses, STOP and exact-source gates are unchanged.

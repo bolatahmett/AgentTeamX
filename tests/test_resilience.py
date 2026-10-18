@@ -123,11 +123,34 @@ class ResilienceTests(unittest.TestCase):
             c.persist(release_recovery_calls={'release:'+'a'*40:10},published_commit='b'*40)
             second=team.Team(f.project,f.home,runner=f.run_role)
             second.begin_release_recovery('b'*40,'Failure two')
+            second.config['max_calls_per_release_recovery']=10
             second.execute('devops')
             self.assertEqual(second.state['release_recovery']['incident'],'a'*40)
             self.assertEqual(second.state['attention_kind'],'release_recovery_budget')
             self.assertEqual(f.roles,[])
             with self.assertRaises(ValueError):second.begin_release_recovery('c'*40,'Unrecorded commit')
+        finally:f.doCleanups()
+
+    def test_increased_release_budget_keeps_ledger_and_enforces_new_cap(self):
+        from test_team import TeamTests
+        f=TeamTests();f.setUp()
+        try:
+            f.adopted();c=f.controller;c.persist(published_commit='a'*40)
+            c.begin_release_recovery('a'*40,'Existing incident')
+            key='release:'+'a'*40
+            c.persist(release_recovery_calls={key:10})
+            second=team.Team(f.project,f.home,runner=f.run_role)
+            self.assertEqual(second.config['max_calls_per_release_recovery'],40)
+            second.execute('devops')
+            self.assertEqual(second.state['release_recovery_calls'][key],11)
+            self.assertEqual(f.roles,['devops'])
+            second.persist(release_recovery_calls={key:40})
+            third=team.Team(f.project,f.home,runner=f.run_role)
+            third.execute('code_reviewer')
+            self.assertEqual(third.state['attention_kind'],'release_recovery_budget')
+            self.assertEqual(third.state['release_recovery_calls'][key],40)
+            self.assertEqual(f.roles,['devops'])
+            self.assertEqual(third.config['max_fix_attempts'],2)
         finally:f.doCleanups()
 
     def test_windowless_controller_is_a_competing_writer(self):

@@ -67,6 +67,17 @@ Return exactly one JSON object matching the supplied report schema. Required:
 
 ## Assigned responsibility
 
+When context.delivery_batch is supplied, verify its source tasks and the listed
+acceptance_tasks in one owned current-build runtime and isolated browser setup.
+Prepare/build once, run the related scenarios sequentially, then clean up once.
+Record pass/fail/unrun and evidence separately for every ID; sharing a session
+never waives a task's acceptance or closes an unrelated gate. A reproducible
+failure needs a targeted fix and affected-scenario regression, not unrelated
+full-suite repetition. If no application/environment files changed and the scope
+is documentation only, review links, policy, task graph and UTF-8 without starting
+the app or browser. Retain physical-device, owner and release gates independently.
+Inspect checkpoint provenance and reuse valid unchanged outputs before rebuilding.
+
 Independently exercise the assigned acceptance against the exact reviewed
 snapshot. Do not edit source, task rows, fixtures, dependencies, Git state or policy.
 Write only local test artifacts in the controller-assigned runtime directory.

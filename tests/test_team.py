@@ -75,6 +75,90 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.controller.state['stage'], 'ready_for_commit')
         return self.controller.state['snapshot']
 
+    def test_batch_selects_only_ready_tasks_and_eligible_acceptance(self):
+        self.write('tasks.md', '\n'.join([
+            '- [x] **T1 Done** | done | Dependencies: None.',
+            '- [ ] **T2 First** | todo | Dependencies: T1.',
+            '- [ ] **T3 Second** | todo | Dependencies: T1.',
+            '- [ ] **T4 Waiting** | blocked | Dependencies: T1.',
+            '- [ ] **T5 Unready** | todo | Dependencies: T2.',
+            '- [ ] **T6 Blocked dependency** | blocked | Dependencies: T5.',
+        ]))
+        config = {'delivery_batches': [{'id': 'shared', 'tasks': ['T2', 'T3', 'T5'],
+                                       'acceptance_tasks': ['T4', 'T6']}]}
+        result = team.delivery_batch(self.project, config, 'T2')
+        self.assertEqual(result, {'id': 'shared', 'tasks': ['T2', 'T3'], 'acceptance_tasks': ['T4']})
+        self.assertEqual(team.delivery_batch(self.project, config, 'T1')['tasks'], ['T1'])
+
+    def test_batch_uses_one_developer_and_one_gate_chain(self):
+        self.write('tasks.md', '- [ ] **T1 First** | todo | Dependencies: None.\n'
+                   '- [ ] **T2 Second** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Two tasks')
+        self.controller.config['delivery_batches'] = [{'id': 'shared', 'tasks': ['T1', 'T2']}]
+        self.controller.initialize()
+        self.effects['developer'] = lambda: self.write('app.txt', 'both changes\n')
+        self.controller.step()
+        self.assertEqual(self.controller.context('qa')['delivery_batch']['tasks'], ['T1', 'T2'])
+        for _ in range(3): self.controller.step()
+        self.assertEqual(self.roles, ['developer', *team.GATES])
+        self.assertEqual(self.controller.state['stage'], 'ready_for_commit')
+        self.assertEqual(self.controller.state['delivery_calls'][self.controller.config['delivery_epoch'] + ':shared'], 4)
+
+    def test_batch_rejects_unknown_ids_and_oversized_groups(self):
+        for tasks in (['T1', 'T999'], ['T1', 'T2', 'T3', 'T4'], ['T1', 'T1']):
+            with self.subTest(tasks=tasks), self.assertRaises(ValueError):
+                team.delivery_batch(self.project, {'delivery_batches': [{'id': 'invalid', 'tasks': tasks}]}, 'T1')
+
+    def test_role_model_routing_and_release_diagnosis(self):
+        self.assertEqual(set(self.controller.config['role_models']), team.ROLES)
+        self.assertEqual(self.controller.worker_model('operations')['model'], 'gpt-6-luna')
+        self.assertEqual(self.controller.worker_model('developer')['model'], 'gpt-6.1-sol')
+        self.assertEqual(self.controller.worker_model('devops')['model'], 'gpt-6-luna')
+        self.controller.state['release_recovery'] = {'active': True}
+        self.assertEqual(self.controller.worker_model('devops')['model'], 'gpt-6.1-sol')
+        self.assertEqual(self.controller.worker_model_args('qa'),
+                         ['--model', 'gpt-6-sol', '-c', 'model_reasoning_effort="medium"'])
+        self.assertEqual(self.controller.context('qa')['model_policy'], self.controller.worker_model('qa'))
+        self.assertEqual(self.controller.worker_sandbox('devops'), 'read-only')
+
+    def test_missing_model_policy_inherits_and_invalid_policy_fails(self):
+        self.controller.config.pop('role_models')
+        self.assertEqual(self.controller.worker_model_args('qa'), [])
+        self.controller.config['role_models'] = {'qa': {'model': 'gpt-6-luna', 'reasoning_effort': 'invalid'}}
+        with self.assertRaisesRegex(ValueError, 'Invalid model policy'):
+            self.controller.worker_model_args('qa')
+
+    def test_retry_external_repair_reviews_before_stale_developer_assignment(self):
+        self.adopted()
+        self.controller.persist(stage='needs_attention',resume_role='developer',
+                                release_recovery={'active':True,'incident':'a'*40},
+                                release_recovery_calls={'release:'+'a'*40:11})
+        self.write('app.txt','owner already repaired the finding\n')
+        self.controller.stop.write_text('Owner maintenance',encoding='utf-8')
+        self.controller.retry()
+        self.assertEqual(self.controller.state['stage'],'code_reviewer')
+        self.assertEqual(self.controller.state['resume_role'],'code_reviewer')
+        self.assertEqual(self.controller.state['release_recovery_calls']['release:'+'a'*40],11)
+        self.assertTrue(self.controller.stop.exists())
+        self.controller.stop.unlink()
+        self.controller.step()
+        self.assertEqual(self.roles,['code_reviewer'])
+        self.assertEqual(self.controller.state['stage'],'qa')
+
+    def test_retry_unchanged_work_preserves_assignment_and_owner_stop(self):
+        self.adopted()
+        for role in ('developer','planner','qa','devops','environment_engineer','technical_lead'):
+            with self.subTest(role=role):
+                self.controller.persist(stage='waiting_for_quota',resume_role=role)
+                self.controller.retry()
+                self.assertEqual(self.controller.state['stage'],role)
+        with self.assertRaisesRegex(RuntimeError,'No blocked stage'):
+            self.controller.retry()
+        self.controller.persist(stage='needs_attention')
+        with patch.object(team,'competing_processes',return_value=[{'ProcessId':123}]):
+            with self.assertRaisesRegex(RuntimeError,'Stop coordinator'):
+                self.controller.retry()
+
     def test_dirty_initialization_requires_explicit_adoption(self):
         self.write('app.txt', 'owner changes')
         with self.assertRaisesRegex(RuntimeError, 'adopt-dirty'):
@@ -295,6 +379,8 @@ class TeamTests(unittest.TestCase):
         fake.poll.return_value = 1
 
         def spawn(args, **kwargs):
+            self.assertEqual(args[args.index('--model') + 1], 'gpt-6-sol')
+            self.assertIn('model_reasoning_effort="medium"', args)
             team.save(Path(args[args.index('-o') + 1]), report())
             return fake
 

@@ -6,7 +6,7 @@
   "stop_grace_seconds": 5,
   "max_fix_attempts": 2,
   "environment_max_attempts": 2,
-  "max_calls_per_start": 24,
+  "max_calls_per_start": 48,
   "ux_interval_hours": 24,
   "operations_interval_seconds": 300,
   "operations_url": "https://sohbetavlusu.com/api/v1/ready",
@@ -25,7 +25,31 @@
   "publication_authorization": "owner-2026-10-18",
   "worker_inactivity_seconds": 600,
   "qa_owns_environment": true,
-  "max_calls_per_delivery": 8,
+  "max_calls_per_delivery": 24,
   "delivery_epoch": "focused-delivery-2026-10-18",
-  "max_calls_per_release_recovery": 10
+  "max_calls_per_release_recovery": 40,
+  "role_models": {
+    "operations": {"model": "gpt-6-luna", "reasoning_effort": "low"},
+    "devops": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
+    "planner": {"model": "gpt-6-sol", "reasoning_effort": "low"},
+    "ux_reviewer": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
+    "qa": {"model": "gpt-6-sol", "reasoning_effort": "medium"},
+    "environment_engineer": {"model": "gpt-6-sol", "reasoning_effort": "medium"},
+    "developer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+    "code_reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+    "technical_lead": {"model": "gpt-6.1-sol", "reasoning_effort": "high"}
+  },
+  "release_diagnostic_model": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "delivery_batches": [
+    {
+      "id": "presence-return-20261018",
+      "tasks": ["T57", "T59"],
+      "acceptance_tasks": ["T54", "T55", "T56"]
+    },
+    {
+      "id": "messages-return-20261018",
+      "tasks": ["T60"],
+      "acceptance_tasks": ["T51", "T52", "T53", "T35", "T38", "T42"]
+    }
+  ]
 }

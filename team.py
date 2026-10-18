@@ -106,6 +106,26 @@ def backlog(project):
     return rows,[r['id'] for r in rows if r['status'] in {'todo','in_progress'} and set(r['deps'])<=done]
 
 
+def delivery_batch(project, config, first):
+    """Select explicitly grouped ready work without waiving dependency gates."""
+    rows, ready = backlog(project)
+    by_id = {row['id']: row for row in rows}
+    for group in config.get('delivery_batches', []):
+        members = group['tasks']
+        if first not in members:
+            continue
+        if not members or len(members) > 3 or len(set(members)) != len(members):
+            raise ValueError('Delivery batches require at most three distinct source tasks')
+        if any(task not in by_id for task in members + group.get('acceptance_tasks', [])):
+            raise ValueError('Delivery batch references an unknown task')
+        done = {row['id'] for row in rows if row['status'] == 'done'}
+        acceptance = [task for task in group.get('acceptance_tasks', [])
+                      if by_id[task]['status'] == 'blocked' and set(by_id[task]['deps']) <= done]
+        return {'id': group['id'], 'tasks': [task for task in members if task in ready],
+                'acceptance_tasks': acceptance}
+    return {'id': first, 'tasks': [first], 'acceptance_tasks': []}
+
+
 def validate_report(report, role):
     keys={'status','summary','evidence','findings','limitations','next_action','capability_requests'}
     if not isinstance(report,dict) or set(report)!=keys:raise ValueError('Invalid report fields')
@@ -277,6 +297,8 @@ class Team:
 
     def context(self,role):
         return {'role':role,'project':str(self.project),'task':self.state.get('task'),
+                'delivery_batch':self.state.get('delivery_batch'),
+                'model_policy':self.worker_model(role),
                 'snapshot':self.state.get('snapshot'),'state_file':str(self.state_path),
                 'deferred_reports':self.state.get('deferred_reports',[]),
                 'recovery':self.state.get('recovery'),
@@ -319,6 +341,23 @@ class Team:
         if sandbox not in {'workspace-write','danger-full-access'}:raise ValueError('Invalid local execution sandbox')
         return sandbox
 
+    def worker_model(self,role):
+        if role not in ROLES:raise ValueError('Unknown role')
+        policy=self.config.get('role_models',{}).get(role)
+        if role=='devops' and (self.state.get('release_recovery') or {}).get('active'):
+            policy=self.config.get('release_diagnostic_model',policy)
+        if policy is None:return None
+        if (not isinstance(policy,dict) or set(policy)!={'model','reasoning_effort'} or
+            not isinstance(policy['model'],str) or not re.fullmatch(r'[a-zA-Z0-9._-]+',policy['model']) or
+            policy['reasoning_effort'] not in {'low','medium','high','xhigh','max'}):
+            raise ValueError('Invalid model policy for '+role)
+        return dict(policy)
+
+    def worker_model_args(self,role):
+        policy=self.worker_model(role)
+        if policy is None:return []
+        return ['--model',policy['model'],'-c','model_reasoning_effort='+json.dumps(policy['reasoning_effort'])]
+
     def run_worker(self,role):
         settings=load(self.home/'agents'/role/'role.json',{})
         sandbox=self.worker_sandbox(role)
@@ -333,6 +372,8 @@ class Team:
         binary=shutil.which(self.config['codex'])
         if not binary:raise RuntimeError('Codex CLI missing; run doctor')
         args=[binary,'-c','approval_policy="never"','exec','--cd',str(self.project),'--sandbox',sandbox,'--json','--output-schema',str(self.home/'report.schema.json'),'-o',str(output),'-']
+        args[-1:-1]=self.worker_model_args(role)
+        self.event('worker_model_selected',role=role,policy=self.worker_model(role))
         last_heartbeat=0;last_output=time.monotonic();q=queue.Queue();terminal=None;stop_at=None;quota=False;failed=False;completed=False;started=time.monotonic();previous_tick=started
         with log.open('w',encoding='utf-8') as f:
             p=background_popen(args,cwd=self.project,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',bufsize=1)
@@ -340,7 +381,7 @@ class Team:
             except Exception:
                 terminate_owned(p)
                 raise RuntimeError('Cannot contain worker descendants in an owned Windows job; no handoff is allowed')
-            self.persist(worker_pid=p.pid,active_role=role,active_log=str(log.relative_to(self.project)))
+            self.persist(worker_pid=p.pid,active_role=role,active_model=self.worker_model(role),active_log=str(log.relative_to(self.project)))
             def read():
                 try:
                     for line in p.stdout:q.put(line)
@@ -396,7 +437,8 @@ class Team:
         if active:raise RuntimeError('Competing writer detected before role start')
         recovery=self.state.get('release_recovery') or {}
         recovering=recovery.get('active') is True
-        mission=('release:'+recovery['incident'] if recovering else str(self.config.get('delivery_epoch','legacy'))+':'+str(self.state.get('task')))
+        batch=self.state.get('delivery_batch') or {}
+        mission=('release:'+recovery['incident'] if recovering else str(self.config.get('delivery_epoch','legacy'))+':'+str(batch.get('id') or self.state.get('task')))
         ledger_name='release_recovery_calls' if recovering else 'delivery_calls'
         ledger=dict(self.state.get(ledger_name,{}))
         limit=self.config.get('max_calls_per_release_recovery',10) if recovering else self.config.get('max_calls_per_delivery',1000)
@@ -610,6 +652,25 @@ class Team:
             if not isinstance(probe,dict) or probe.get('passed') is not True or not isinstance(probe.get('command'),str) or not probe['command'].strip():raise ValueError('Missing local capability readiness probe')
         return manifest
 
+    def retry(self):
+        if self.lock.exists() or competing_processes(self.project):
+            raise RuntimeError('Stop coordinator and workers before retry')
+        if self.state['stage'] not in {'needs_attention','waiting_for_quota'}:
+            raise RuntimeError('No blocked stage to retry')
+        role=self.state.get('resume_role')
+        if role not in ROLES:role='code_reviewer'
+        current=snapshot(self.project)
+        changed=current['fingerprint']!=self.state.get('snapshot')
+        receipts=self.state.get('receipts',{})
+        if changed:
+            # External repairs must be reviewed before resuming any stale assignment.
+            role='code_reviewer'
+            receipts=retained_gates(receipts,current)
+        self.persist(stage=role,resume_role=role,snapshot=current['fingerprint'],
+                     receipts=receipts,attempts=0,
+                     reason='Owner explicitly requested retry; changed source requires fresh review'
+                     if changed else 'Owner explicitly requested retry of unchanged assigned stage')
+
     def step(self):
         stage=self.state['stage']
         if stage=='uninitialized':raise RuntimeError('Initialize the team first')
@@ -629,7 +690,10 @@ class Team:
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
         if stage=='schedule':
             _,ready=backlog(self.project)
-            if ready:self.persist(stage='developer',task=ready[0],attempts=0);stage='developer'
+            if ready:
+                batch=delivery_batch(self.project,self.config,ready[0])
+                self.persist(stage='developer',task=ready[0],delivery_batch=batch,attempts=0)
+                stage='developer'
             elif self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
                 self.persist(stage='ux_reviewer');stage='ux_reviewer'
             else:self.persist(stage='idle',reason='No ready work; waiting for evidence or new owner input');return
@@ -792,17 +856,7 @@ def main():
             text=validate_intake(args.text)
             p=team.folder/'inbox'/(uuid.uuid4().hex+'.json');save(p,{'source':'owner_helper','recorded_at':stamp(),'text':text});print('Queued:',p.name)
         elif args.command=='retry':
-            if team.lock.exists():raise RuntimeError('Stop coordinator before retry')
-            if team.state['stage'] not in {'needs_attention','waiting_for_quota'}:raise RuntimeError('No blocked stage to retry')
-            role=team.state.get('resume_role')
-            if role not in ROLES:role='code_reviewer'
-            current_snapshot=snapshot(team.project)
-            current=current_snapshot['fingerprint']
-            receipts=team.state.get('receipts',{})
-            if current!=team.state.get('snapshot'):
-                receipts=retained_gates(receipts,current_snapshot)
-                if role in set(GATES)|{'environment_engineer'}:role='code_reviewer'
-            team.persist(stage=role,snapshot=current,receipts=receipts,attempts=0,reason='Owner explicitly requested retry; changed source requires fresh review')
+            team.retry()
         elif args.command=='recover-release':
             if team.lock.exists() or competing_processes(team.project):raise RuntimeError('Stop all workers before reopening release recovery')
             observation=load(team.folder/'release-observation.json',{})

@@ -70,7 +70,13 @@ Return exactly one JSON object matching the supplied report schema. Required:
 
 ## Assigned responsibility
 
-Implement one assigned ready task or bounded review repair using existing source.
+Implement the ready tasks in context.delivery_batch.tasks together when supplied;
+otherwise implement one assigned ready task or bounded review repair using existing source.
+Keep the batch bounded to the explicit IDs; do not pull in unrelated backlog work.
+Apply all changes before one combined source-review/QA chain. Run each meaningful
+targeted check once for the resulting source, not once per task. Record progress
+and remaining acceptance separately for every task. acceptance_tasks are delivered
+source awaiting shared QA, not instructions to reimplement those features.
 Respect unrelated dirty changes and the exact assigned scope. No Git operations.
 Run meaningful targeted checks, fixing failures; do not replace runtime acceptance
 with assertion counts. Update tasks.md truthfully: pending browser acceptance

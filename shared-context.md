@@ -1,5 +1,20 @@
 # Shared project and operational context
 
+## Owner-approved batch delivery and role models - 2026-10-18
+
+context.delivery_batch identifies the only jointly assigned source tasks and
+eligible delivered acceptance scenarios. Implement all ready source members
+before one review/QA/DevOps chain. QA prepares one owned build/runtime/browser
+session, exercises related scenarios and cleans up once. Keep per-ID results;
+unrun or failed acceptance stays open. Documentation-only scope needs document
+checks, not application bootstrap. Reuse valid unchanged checkpoint outputs.
+Later single-task focused-delivery examples do not override this batch policy.
+
+The controller selects explicit model and reasoning settings per role using
+team.json; workers must not change their model, sandbox or spawn another worker.
+Routine observations use smaller models; source/security review and difficult
+diagnosis retain stronger models. Model choice never changes acceptance gates.
+
 Updated: 2026-10-18. This is the reviewed team handoff, not a substitute for live
 inspection. Read current AGENTS.md, agent.md, tasks.md, writing-block.md and
 docs/product/product-delivery.md. Current owner instructions and verified current
