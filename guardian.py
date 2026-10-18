@@ -107,12 +107,12 @@ def run():
                             reason='Exact-release CI/deployment observation: '+result
                             team.save(folder/'release-observation.json',{'at':team.stamp(),'commit':s['published_commit'],'ci':result,'workflows':rows,'health':observation})
                             if result=='passed' and observation.get('release')==s['published_commit'] and observation.get('status')=='ready':
-                                c.persist(stage='release_verified',reason='Exact CI/deployment and live release verified')
+                                c.persist(stage='release_verified',release_recovery={**(s.get('release_recovery') or {}),'active':False},reason='Exact CI/deployment and live release verified')
                                 c.event('release_verified',commit=s['published_commit'])
                             elif s.get('publication_started_at') and now-dt.datetime.fromisoformat(s['publication_started_at']).timestamp()>c.config.get('release_verify_timeout_seconds',3600):
-                                c.persist(stage='devops',resume_role='devops',reason='Exact release verification deadline exceeded; inspect workflow and live SHA',attention_kind='release_failure')
+                                c.begin_release_recovery(s['published_commit'],'Exact release verification deadline exceeded; inspect workflow and live SHA')
                             elif result=='failed':
-                                c.persist(stage='devops',resume_role='devops',reason='CI/deployment failed; inspect exact release workflow',attention_kind='release_failure')
+                                c.begin_release_recovery(s['published_commit'],'CI/deployment failed; inspect exact release workflow')
                         except Exception as exc:reason=str(exc)
                 elif s['stage']=='release_verified':
                     c.persist(stage='schedule',receipts={},attempts=0,reason='Verified release complete; selecting next ready work')

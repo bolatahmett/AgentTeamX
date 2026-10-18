@@ -100,6 +100,36 @@ class ResilienceTests(unittest.TestCase):
             self.assertEqual(f.roles,['code_reviewer'])
         finally:f.doCleanups()
 
+    def test_release_recovery_uses_separate_budget_without_resetting_delivery(self):
+        from test_team import TeamTests
+        f=TeamTests();f.setUp()
+        try:
+            f.adopted();c=f.controller
+            mission=c.config['delivery_epoch']+':'+str(c.state['task'])
+            c.persist(delivery_calls={mission:8},published_commit='a'*40)
+            c.begin_release_recovery('a'*40,'Deployment failed')
+            c.execute('devops')
+            self.assertEqual(f.roles,['devops'])
+            self.assertEqual(c.state['delivery_calls'][mission],8)
+            self.assertEqual(c.state['release_recovery_calls']['release:'+'a'*40],1)
+        finally:f.doCleanups()
+
+    def test_release_recovery_budget_survives_new_candidates_and_restart(self):
+        from test_team import TeamTests
+        f=TeamTests();f.setUp()
+        try:
+            f.adopted();c=f.controller;c.persist(published_commit='a'*40)
+            c.begin_release_recovery('a'*40,'Failure one')
+            c.persist(release_recovery_calls={'release:'+'a'*40:10},published_commit='b'*40)
+            second=team.Team(f.project,f.home,runner=f.run_role)
+            second.begin_release_recovery('b'*40,'Failure two')
+            second.execute('devops')
+            self.assertEqual(second.state['release_recovery']['incident'],'a'*40)
+            self.assertEqual(second.state['attention_kind'],'release_recovery_budget')
+            self.assertEqual(f.roles,[])
+            with self.assertRaises(ValueError):second.begin_release_recovery('c'*40,'Unrecorded commit')
+        finally:f.doCleanups()
+
     def test_windowless_controller_is_a_competing_writer(self):
         inventory=[{'ProcessId':987654,'Name':'pythonw.exe','CommandLine':'pythonw.exe C:/project/agent-team/team.py start --resume'}]
         self.assertEqual(len(team.competing_processes(Path('C:/project'),inventory)),1)

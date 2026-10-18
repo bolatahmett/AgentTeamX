@@ -248,3 +248,16 @@ repeated local preparation problems select technical diagnosis. Quota and policy
 remain blocked. Monitoring shows completed/remaining gates, next action, guardian
 heartbeat, repeated starts and completed role durations from retained history.
 No percentage or production acceptance is inferred from command completion.
+
+
+## Independent release recovery budget
+
+Failed deployment observation schedules DevOps with a persistent release incident.
+Its ten-call recovery budget is separate from the eight-call product-delivery
+budget and covers diagnosis, repair and required review/QA. Both ledgers survive
+controller restarts. A new candidate SHA does not reset an unresolved incident;
+only verified CI and matching healthy production SHA close it. All existing
+source, commit and publication checks remain required. For a previously blocked
+exact recorded failed publication, stop workers and run
+`python agent-team/team.py recover-release`, then explicitly Resume. This command
+preserves owner STOP and all counters; it does not waive checks or publish.

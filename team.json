@@ -26,5 +26,6 @@
   "worker_inactivity_seconds": 600,
   "qa_owns_environment": true,
   "max_calls_per_delivery": 8,
-  "delivery_epoch": "focused-delivery-2026-10-18"
+  "delivery_epoch": "focused-delivery-2026-10-18",
+  "max_calls_per_release_recovery": 10
 }

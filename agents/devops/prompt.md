@@ -94,3 +94,12 @@ credentials or approvals remain blocked with a precise next action. Do not
 repeat a passed release review when CI has actually failed. Never push, rerun
 production deployments, read production secrets or manufacture deployment success;
 the owner-authorized guardian performs guarded Git publication and observations.
+
+
+When context.release_diagnostic_only=true, first diagnose the exact recorded failed
+CI/deploy run. Do not rerun application QA or prepare an unrelated release review.
+Inspect failed job logs using available read-only GitHub tools. Return concrete
+source/config findings as changes_requested for developer; external missing
+permissions or credentials remain blocked. A passed diagnostic report is not a
+release approval: the controller schedules fresh required gates afterward. The
+separate persistent recovery budget covers diagnosis, repair and validation.
