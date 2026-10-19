@@ -1,5 +1,6 @@
 """Independent supervisor: owns controller lifecycle, observations and release handoffs."""
 import json
+import hashlib
 import datetime as dt
 import os
 from pathlib import Path
@@ -60,6 +61,10 @@ def release_action(controller):
     return None
 
 
+def machinery_fingerprint():
+    return team.machinery_fingerprint(team.HOME)
+
+
 def run():
     folder=team.PROJECT/'.supervisor/team-v2';folder.mkdir(parents=True,exist_ok=True)
     # A Windows named mutex is released by the OS on crashes; no stale PID lock.
@@ -74,6 +79,7 @@ def run():
     previous=team.load(folder/'guardian.json',{}) or {}
     child=None;restarts=previous.get('restart_times',[]);last_health=0;last_loop=time.time();last_verify=0
     observation={};reason='Starting';generation=0;exit_reason='Stopped by STOP'
+    initial_machinery=machinery_fingerprint();reload_guardian=False
     try:
         while not (folder/'STOP').exists():
             now=time.time();c=team.Team();s=c.state
@@ -88,10 +94,16 @@ def run():
                 if child.returncode!=0:restarts.append(now);observed_exit=True
                 child=None
             if not view['controller_alive'] and not (child and child.poll() is None):
+                current_machinery=machinery_fingerprint()
+                if initial_machinery is None:initial_machinery=current_machinery
+                elif current_machinery and current_machinery!=initial_machinery:
+                    reload_guardian=True;exit_reason='Reloading repaired coordinator machinery';break
                 if c.lock.exists():
                     # Only the existing inventory-checked acquire path archives stale locks.
                     if team.competing_processes(c.project):reason='Waiting for owned processes to exit';time.sleep(2);continue
                     c.lock.replace(folder/('LOCK.archived-guardian-'+str(time.time_ns())))
+                if c.state['stage']=='waiting_for_quota':c.resume_quota()
+                if c.state['stage'] in {'needs_attention','waiting_recovery'}:c.schedule_intervention()
                 try:action=release_action(c)
                 except Exception as exc:
                     c.persist(stage='needs_attention',resume_role='devops',attention_kind='release_failure',reason='Guarded release action failed: '+str(exc))
@@ -143,6 +155,8 @@ def run():
             else:team.terminate_owned(child)
         team.save(folder/'guardian.json',{'pid':None,'at':team.stamp(),'reason':exit_reason,'restart_times':restarts})
         kernel.CloseHandle(ctypes.c_void_p(mutex))
+    if reload_guardian and not (folder/'STOP').exists():
+        os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve())])
 
 
 if __name__=='__main__':run()

@@ -51,7 +51,7 @@ Only the controller schedules workers and mutates team runtime state. Do not
 ## Result contract
 
 Return exactly one JSON object matching the supplied report schema. Required:
- status (passed | changes_requested | blocked | completed | clear), summary
+ status (passed | changes_requested | blocked), summary
  (string), evidence (string array), findings (string array), limitations (string
  array), next_action (string), capability_requests (string array). All fields are
  required; use empty arrays when none. Only blocked reports may request a missing

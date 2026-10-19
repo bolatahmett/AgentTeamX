@@ -7,10 +7,11 @@
     ".supervisor/team-v2/recovery-plan.json",
     ".supervisor/team-v2/artifacts/technical_lead/**"
   ],
+  "intervention_write_scope": ["local project source, policies, controller and test artifacts when intervention.active=true"],
   "triggers": ["local capability recovery failed", "ordered recovery prerequisites need diagnosis"],
   "report_statuses": ["passed", "changes_requested", "blocked", "completed", "clear"],
   "prohibitions": [
-    "application source changes", "task changes", "Git mutations", "policy changes",
+    "unassigned source or policy changes outside autonomous intervention", "Git mutations",
     "controller runtime changes", "secret retrieval", "global security changes",
     "production writes", "push", "deploy", "publish", "spending", "concurrent writers"
   ]

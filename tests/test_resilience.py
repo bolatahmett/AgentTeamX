@@ -161,6 +161,13 @@ class ResilienceTests(unittest.TestCase):
         for text,kind in [('QUOTA_LIMIT','quota'),('permission denied','policy'),('Role deadline exceeded','timeout'),('Git timed out after -330 seconds','timeout'),('CLI failed','transport'),('cleanup failed','cleanup'),('build failed','build'),('Invalid report','validation')]:
             self.assertEqual(resilience.failure_kind(text),kind)
 
+    def test_local_rate_limit_text_is_not_account_quota(self):
+        for text in ('Local entry returned HTTP 429','rate limit from localhost','CLI failed: HTTP 429'):
+            self.assertNotEqual(resilience.failure_kind(text),'quota')
+            self.assertIsNone(team.QUOTA.search(text))
+        self.assertEqual(resilience.failure_kind('Account usage limit reached'),'quota')
+        self.assertIsNotNone(team.QUOTA.search('You have hit your usage limit'))
+
     def test_only_qa_can_reuse_unchanged_runtime_scope(self):
         current={'fingerprint':'new','scopes':{'application':'a','environment':'b','team':'new'}}
         receipt={'snapshot':'old','scopes':{'application':'a','environment':'b','team':'old'},'report':{'status':'passed'}}

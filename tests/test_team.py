@@ -19,6 +19,42 @@ def report(status='passed', findings=None):
 
 
 class TeamTests(unittest.TestCase):
+    def test_report_blank_items_do_not_discard_blocked_qa_evidence(self):
+        original = report('blocked')
+        original['limitations'] = ['Pending browser recovery', '', '  \t']
+        original['evidence'] += ['']
+        cleaned = team.validate_report(original, 'qa')
+        self.assertEqual(cleaned['status'], 'blocked')
+        self.assertEqual(cleaned['limitations'], ['Pending browser recovery'])
+        self.assertEqual(cleaned['evidence'], ['Verified fixture'])
+        self.assertEqual(original['limitations'], ['Pending browser recovery', '', '  \t'])
+
+    def test_report_cleanup_cannot_manufacture_a_gate_pass(self):
+        for evidence in ([], ['', '  ']):
+            with self.assertRaisesRegex(ValueError, 'needs evidence'):
+                team.validate_report({**report(), 'evidence': evidence}, 'qa')
+        with self.assertRaisesRegex(ValueError, 'Unresolved findings'):
+            team.validate_report({**report(), 'findings': ['', 'Actual defect']}, 'qa')
+        for key in ('evidence', 'findings', 'limitations'):
+            for value in (None, 'text', [None], [123], [{}]):
+                with self.assertRaisesRegex(ValueError, 'Invalid '+key):
+                    team.validate_report({**report(), key: value}, 'qa')
+
+    def test_blank_limitation_preserves_qa_handoff_without_extra_call(self):
+        self.adopted()
+        self.controller.step()
+        blocked = report('blocked')
+        blocked['limitations'] = ['Remaining browser scenarios are unrun', '']
+        blocked['next_action'] = 'Correct the local QA harness and resume remaining scenarios'
+        self.responses['qa'] = blocked
+        self.controller.step()
+        stored = team.load(self.project / self.controller.state['reports']['qa'])
+        self.assertEqual(stored['report']['limitations'], ['Remaining browser scenarios are unrun'])
+        self.assertEqual(stored['report']['status'], 'blocked')
+        self.assertNotIn('qa', self.controller.state.get('receipts', {}))
+        self.assertEqual(self.roles, ['code_reviewer', 'qa'])
+        self.assertNotEqual(self.controller.state.get('attention_kind'), 'worker_failure')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -28,6 +64,7 @@ class TeamTests(unittest.TestCase):
         config = json.loads((Path(team.__file__).parent / 'team.json').read_text(encoding='utf-8-sig'))
         config['auto_commit'] = False
         config['qa_owns_environment'] = False
+        config['autonomous_intervention'] = False
         config['max_calls_per_delivery'] = 1000
         team.save(self.home / 'team.json', config)
         self.write('.gitignore', '.supervisor/\n')
@@ -519,12 +556,79 @@ class TeamTests(unittest.TestCase):
         self.write('tasks.md', '- [ ] **T1 Work** | in_progress | Dependencies: None.\n- [ ] **T2 Other** | todo | Dependencies: None.\n')
         self.controller.initialize(adopt=True)
         self.controller.persist(stage='qa', task='T1')
-        self.responses['qa'] = report('blocked', ['Required authorized browser is unavailable'])
+        self.responses['qa'] = report('blocked')
+        self.responses['qa']['limitations'] = ['Required authorized browser is unavailable']
         self.controller.step()
         self.assertEqual(self.controller.state['stage'], 'planner')
         self.assertEqual(self.controller.state['deferred_reports'][0]['task'], 'T1')
         self.assertEqual(self.controller.state['receipts'], {})
         self.assertEqual(self.roles, ['qa'])
+
+
+class LocalWaitTests(unittest.TestCase):
+    setUp=TeamTests.setUp
+    write=TeamTests.write
+    git=TeamTests.git
+    run_role=TeamTests.run_role
+    adopted=TeamTests.adopted
+    def prepare_wait(self, seconds=60):
+        self.adopted()
+        self.controller.persist(stage='qa',task='T1')
+        result=report('blocked')
+        result['next_action']=f'WAIT_LOCAL_RATE_LIMIT seconds={seconds}; Resume only incomplete scenarios'
+        result['evidence']=['Local synthetic endpoint returned 429; observed Retry-After 60 seconds']
+        self.responses['qa']=result
+        self.controller.step()
+
+    def test_wait_does_not_call_agents_before_deadline_and_survives_reload(self):
+        self.prepare_wait()
+        self.assertEqual(self.controller.state['stage'],'waiting_local')
+        restored=team.Team(self.project,self.home,runner=self.run_role)
+        restored.step()
+        self.assertEqual(self.roles,['qa'])
+        with patch.object(team.time,'time',return_value=restored.state['local_wait']['not_before']+1):
+            restored.step()
+        self.assertEqual(restored.state['stage'],'qa')
+        self.assertEqual(self.roles,['qa'])
+        self.assertIn('qa',restored.state['reports'])
+
+    def test_stop_prevents_due_wait_resume(self):
+        self.prepare_wait()
+        self.controller.stop.write_text('Owner STOP',encoding='utf-8')
+        with patch.object(team.time,'time',return_value=self.controller.state['local_wait']['not_before']+1):
+            self.controller.step()
+        self.assertEqual(self.controller.state['stage'],'waiting_local')
+        self.assertEqual(self.roles,['qa'])
+
+    def test_changed_source_requires_review_and_invalidates_affected_gate(self):
+        self.prepare_wait()
+        self.write('app.txt','changed while waiting')
+        with patch.object(team.time,'time',return_value=self.controller.state['local_wait']['not_before']+1):
+            self.controller.step()
+        self.assertEqual(self.controller.state['stage'],'code_reviewer')
+        self.assertEqual(self.controller.state['receipts'],{})
+
+    def test_two_attempt_budget_survives_source_changes(self):
+        self.prepare_wait()
+        for n in range(2):
+            self.controller.persist(stage='qa')
+            self.controller.step()
+        self.assertEqual(self.controller.state['stage'],'needs_attention')
+        self.assertEqual(self.controller.state['attention_kind'],'local_wait_exhausted')
+        self.assertEqual(self.controller.state['local_wait_attempts']['T1:local_rate_limit'],2)
+
+    def test_unknown_blocker_and_invalid_delay_do_not_auto_retry(self):
+        for action in ('Wait for owner approval','WAIT_LOCAL_RATE_LIMIT seconds=0; invalid',
+                       'WAIT_LOCAL_RATE_LIMIT seconds=3601; invalid'):
+            with self.subTest(action=action):
+                result=report('blocked');result['next_action']=action
+                self.assertFalse(self.controller.schedule_local_wait('qa',result,{'fingerprint':'test'},'report'))
+
+    def test_non_qa_or_source_findings_cannot_schedule_wait(self):
+        result=report('blocked');result['next_action']='WAIT_LOCAL_RATE_LIMIT seconds=60; retry'
+        self.assertFalse(self.controller.schedule_local_wait('devops',result,{'fingerprint':'test'},'report'))
+        result['findings']=['Authorization bug']
+        self.assertFalse(self.controller.schedule_local_wait('qa',result,{'fingerprint':'test'},'report'))
 
 
 if __name__ == '__main__':

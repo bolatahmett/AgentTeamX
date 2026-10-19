@@ -22,12 +22,29 @@
     "developer": "danger-full-access"
   },
   "strategy_max_attempts": 2,
+  "autonomous_intervention": true,
+  "intervention_authorization": "owner-2026-10-19",
+  "max_interventions_per_incident_hour": 6,
+  "max_interventions_per_hour": 12,
   "publication_authorization": "owner-2026-10-18",
   "worker_inactivity_seconds": 600,
   "qa_owns_environment": true,
   "max_calls_per_delivery": 24,
   "delivery_epoch": "focused-delivery-2026-10-18",
   "max_calls_per_release_recovery": 40,
+  "engine_failover": true,
+  "primary_engine": "codex",
+  "role_engines": {
+    "developer": "claude",
+    "technical_lead": "claude",
+    "code_reviewer": "claude"
+  },
+  "claude_binary": "claude",
+  "claude_models": {
+    "default": {"model": "claude-sonnet-5-5"}
+  },
+  "claude_quota_cooldown_seconds": 1800,
+  "codex_probe_seconds": 300,
   "role_models": {
     "operations": {"model": "gpt-6-luna", "reasoning_effort": "low"},
     "devops": {"model": "gpt-6-luna", "reasoning_effort": "medium"},

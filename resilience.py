@@ -7,7 +7,7 @@ from pathlib import Path
 def scopes(files):
     groups={'application':{},'environment':{},'team':{}}
     for name,digest in files.items():
-        if name in {'tasks.md','agent.md','AGENTS.md','writing-block.md'} or (
+        if name in {'tasks.md','agent.md','AGENTS.md','CLAUDE.md','writing-block.md'} or (
                 name.startswith(('docs/product/','docs/launch/','docs/design/')) and
                 name!='docs/product/agent-team-setup.md'):
             groups['environment'][name]=digest
@@ -22,8 +22,9 @@ def scopes(files):
 
 
 def failure_kind(error):
+    if isinstance(error,PermissionError):return 'filesystem'
     text=str(error).lower()
-    if any(x in text for x in ('quota_limit','out of credits','429')):return 'quota'
+    if any(x in text for x in ('quota_limit','out of credits','usage limit','usage_limit','insufficient_quota')):return 'quota'
     if any(x in text for x in ('policy','permission','access denied','sandbox')):return 'policy'
     if any(x in text for x in ('deadline','timeout','timed out')):return 'timeout'
     if any(x in text for x in ('transport','connection reset','cli failed','no structured report')):return 'transport'

@@ -11,7 +11,7 @@ ignored runtime directory, not to application source.
 | Role | Responsibility | Writes |
 | --- | --- | --- |
 | supervisor | Deterministic scheduling, locking, snapshot gates and bounded retries | Controller-owned runtime state |
-| technical_lead | Diagnose failed local recovery and choose ordered alternative strategies | Ignored recovery plan and diagnostic artifacts |
+| technical_lead | Diagnose recovery; directly repair local stalls in authorized intervention mode | Recovery artifacts; local application/controller/policy source during intervention |
 | planner | Validate findings, prioritize user outcomes and maintain bounded tasks | tasks.md only |
 | developer | Implement one ready task or assigned review repair | Assigned source, targeted tests, related documents and tasks |
 | ux_reviewer | Walk assigned pages and report observed journey friction | None |
@@ -111,10 +111,17 @@ because a configuration file mentions them.
 
 Workers return the common JSON shape: status, summary, evidence, findings,
 limitations, next_action and capability_requests. Allowed status values are passed, changes_requested, blocked,
-completed and clear. Reports must identify concrete checks and limitations and
+completed, clear and QA-only incomplete. Quality gates use passed, changes_requested,
+blocked or QA incomplete; changes_requested requires actionable findings.
+Reports must identify concrete checks and limitations and
 must never include credentials or raw private conversations. Controller state
 binds accepted reports to the actual workspace fingerprint; a worker cannot approve
 an unrelated snapshot by naming it in prose.
+
+Whitespace-only items in evidence, findings and limitations are removed locally
+before validation, without another worker call. Substantive entries and blocked
+status are preserved. Wrong item types, missing fields, empty passing evidence
+and unresolved findings still fail validation; formatting cleanup grants no gate.
 
 findings contains actionable defects only; limitations contains verification
 constraints and unrun checks. A source review may pass its assigned scope with
@@ -131,6 +138,38 @@ existing authentication, access-control, block or consent enforcement.
 
 ## Runtime and scheduling
 
+Owner authorization `owner-2026-10-19` enables autonomous_intervention. Ordinary
+local needs_attention states automatically dispatch the full-local-access
+technical coordinator with intervention.md. This mode can directly repair
+application/controller source, prompts, policies, tasks and local harness/tooling.
+The sole controller suspends normal dispatch while it runs. Successful repair
+produces current-snapshot evidence and a resume assignment, then exits the
+controller so new machinery is loaded. Any controller (including one parked in
+waiting_for_quota or needs_attention) also exits between steps when agent-team/*.py
+changes; the guardian then reloads itself and restarts it. Source changes require independent review, and no
+intervention creates a passing gate or changes Git/publication authority.
+
+Repairs have a separate persistent budget of six calls per incident/hour and
+twelve overall/hour. Exhaustion waits for the next window automatically, without
+paid polling or a manual Retry; product and release ledgers are preserved.
+Successful repair also authorizes one independent review/QA/DevOps pass on the
+exact repaired snapshot and assigned task/batch. These gate calls share that
+same hourly repair budget, including across restarts, so an exhausted delivery
+budget cannot prevent verification of the repair. Each gate can run once per
+repair and is consumed only when the gate returns, so a controller crash
+mid-review retries it (charged to the repair budget); source/task/batch/
+release-incident drift invalidates this assignment.
+Cooldown resumes the pending gate directly. Further failures require diagnosis;
+no product/release limit is raised or counter reset, and no approval is implied.
+On the first reload, an older controller's completed repair handoff can restore
+this assignment only from its saved successful report on the exact current
+snapshot; an existing assignment, including an exhausted one, is never refilled.
+A diagnosed real external credential/permission/owner boundary stays explicit.
+STOP always wins. A repaired QA continuation incident grants two additional QA
+turns without resetting its history/counters. Interrupted state-file replacement
+retries transient Windows sharing locks, and failed disk persistence does not
+advance in-memory scheduling state.
+
 Definitions live here; ignored runtime data lives in .supervisor/team-v2:
 state.json, LOCK, STOP, baseline.json, events.jsonl, inbox/, reports/, logs/, artifacts/.
 Role metadata is validated for identity, worker flag and sandbox. write_scope and
@@ -141,14 +180,42 @@ planning stage. UX runs when no task is ready, source differs from its last revi
 and the configured interval has elapsed. Unchanged source does not trigger repeated
 paid UX reviews. Two failed public readiness probes queue one operations review per
 incident at the next schedule/idle stage. Actionable findings go to planner.
-Blocked gates are quiet until explicit retry or a planner handoff for independent work. Quota pauses
-require explicit retry after account reset. A per-start call budget bounds usage.
+Blocked gates are quiet until explicit retry or a planner handoff for independent work.
+Quota pauses poll the authenticated CLI account/rateLimits/read endpoint at most
+once per five minutes, without a model turn. Positive current core-quota evidence
+resumes the interrupted role; changed source first requires fresh review. Unknown,
+unavailable or exhausted quota stays paused. STOP and persistent delivery budgets
+remain effective; the monitor never consumes reset credits. The guardian can also
+perform this check when the coordinator has exited. A per-start call budget bounds usage.
+Exception: QA may explicitly report a confirmed local synthetic entry cooldown
+using `WAIT_LOCAL_RATE_LIMIT seconds=N;` in next_action, with timing evidence and
+no findings/capability request. N is bounded to 1-3600 seconds. The coordinator
+persists waiting_local and resumes incomplete QA after the deadline, without
+agent calls while waiting. Two attempts per task survive restarts and source
+changes; existing delivery/call budgets remain enforced. STOP prevents resumption,
+changed source requires review and approvals are retained only for matching scopes.
+Unknown blockers, production limits, quota and owner approvals never use this path.
+QA may return incomplete for unfinished local execution with working tools. A
+current-task/current-snapshot continuation.json checklist records observed completed
+scenarios and stable remaining IDs. The coordinator preserves per-scenario evidence,
+schedules only remaining work, and grants at most two continuation turns per task
+across restarts and source changes. Subsequent results must complete a previously
+remaining scenario without dropping IDs. No progress, invalid/stale checklists or
+exhaustion become explicit attention reasons. A later passed report must complete
+the stored checklist; partial progress never creates a passing receipt. External
+approval/tool blockers remain blocked. Generic legacy blocked prose is not silently
+reclassified. Existing call budgets, source review and STOP remain in effect.
 Watch and doctor do not call agents. Public readiness is not a full user-journey smoke.
 
 When a developer/QA/DevOps stage is blocked but another task is independently
 ready, the planner receives the blocked evidence to preserve its opening condition
 and continue useful independent work. Missing acceptance never becomes a passing
 gate. Source or policy failures and quota waits are not automatically retried.
+Blocked quality reports with actionable source findings route to the existing
+bounded developer repair flow instead of being parked as missing acceptance.
+Bare HTTP 429/rate-limit text is not classified as account quota; account usage
+limits require account-specific signals. Fresh worker runs clear stale failure
+labels so an earlier transport/quota incident cannot misclassify the next result.
 
 Stop and verify controller exit before retry, commit, publication or next batch.
 Retry recomputes the current source fingerprint. If maintenance or another owner
@@ -300,3 +367,56 @@ role calls across diagnosis, repair and quality gates, not retries of one defect
 Existing incident/delivery counters are retained when limits increase; the current
 incident at 10 calls therefore has 30 remaining. Repeated-source-finding limits,
 environment/strategy limits, quota pauses, STOP and exact-source gates are unchanged.
+
+
+## Engine failover: Codex primary, Claude Sonnet 5.5 fallback - 2026-10-19
+
+Owner-authorized. `engine_failover` in team.json lets every worker role run on either
+CLI. Codex is the primary engine (`primary_engine`, overridable per role with
+`role_engines`). When a Codex turn ends with a plan/credit exhaustion error the same
+role is re-run immediately on Claude (`claude_models.default`, currently
+claude-sonnet-5-5, effort taken from the role's configured reasoning level) with no
+waiting stage and no manual retry. When Claude is exhausted the work goes back to
+Codex, whichever has quota. Only when both are exhausted does the existing
+waiting_for_quota stage apply.
+
+Owner role split - 2026-10-19: `role_engines` makes developer, technical_lead and
+code_reviewer Claude-first; all other roles stay Codex-first. The split applies while
+both engines have quota; a Claude-first role falls back to Codex on Claude plan
+exhaustion and vice versa. Claude effort follows `role_models` (developer and
+code_reviewer medium, technical_lead high). code_reviewer and Codex-run QA therefore
+use different engines for review and verification.
+
+Return to Codex: an exhausted Codex is re-probed at most every `codex_probe_seconds`
+(300) through the account limit endpoint, without a model turn; positive evidence
+restores it as the first choice for the next role call. Claude has no such endpoint,
+so an exhausted Claude is retried after `claude_quota_cooldown_seconds` (1800). The
+state is kept in state.json under `engines`; events: engine_quota_exhausted,
+engine_failover, engine_restored. Only plan/credit exhaustion switches engines.
+Bare HTTP 429, api_retry rate_limit, timeouts, policy and validation failures keep
+their existing handling and never switch engines. Quota patterns are matched only
+against an event's error/message/result fields, never the whole JSON line, and
+a rate_limit_event counts only when `rate_limit_info.status` is "rejected"
+(`overageStatus` is "rejected" on every event when overage is disabled).
+
+Claude invocation: `claude -p --output-format stream-json --verbose --json-schema
+<report.schema.json> --model M --effort E --no-session-persistence --add-dir <project>
+--strict-mcp-config`, prompt on stdin. Every sandbox limits tools to
+Bash/Read/Edit/Write/Glob/Grep (read-only: Read/Grep/Glob/Bash) and denies Git
+mutation/publication (commit, push, reset, checkout, add, ...), gh, curl/wget/ssh and
+PowerShell web cmdlets, and `--output`/`--ext-diff`/`--textconv`. Deny rules also hold
+under bypass mode (verified live 2026-10-19). danger-full-access uses
+--dangerously-skip-permissions (the same owner-authorized level); workspace-write uses
+acceptEdits; read-only uses dontAsk with read-only git commands and denies Edit/Write.
+Claude Code has no OS sandbox on native Windows: this is a tool-level guardrail that
+pattern rules alone enforce (an indirect shell such as `cmd /c` can evade it), not
+the Codex workspace/network isolation. The controller's HEAD/index checks remain the
+backstop. The report is taken from the final result event's structured_output. Claude workers
+are recognised by competing_processes through --add-dir plus stream-json. Claude reads
+CLAUDE.md (a one-line import of AGENTS.md) instead of AGENTS.md. No MCP servers or
+browser tools reach Claude workers (--strict-mcp-config, which also drops claude.ai
+connectors). The CLI must be on the controller's PATH (winget Anthropic.ClaudeCode)
+and logged in with `claude auth login`; the desktop app's bundled CLI is not used.
+Run `python agent-team/team.py doctor` to verify the claude binary, login and model
+policy.
+Set `engine_failover` to false to return to Codex-only behaviour.

@@ -157,3 +157,15 @@ Runtime preparation has hashed checkpoints; inspect them before repeating builds
 Application, environment/acceptance-contract and team scopes are separate.
 Unchanged QA evidence may be reused only for identical application/environment
 scopes; source review and release review still require the exact full snapshot.
+
+## Owner-authorized autonomous intervention - 2026-10-19
+
+When context.intervention.active=true for technical_lead, use intervention.md
+instead of the diagnostic-only prompt. The owner grants direct full local repair
+authority over application/controller source, prompts, policies, tasks and local
+tooling/harnesses. This explicitly overrides the normal no-source/policy-edit rule
+for that scheduled intervention. Ordinary workers retain their existing scopes.
+The controller suspends other work and reloads after repair; changed source gets
+independent review. Runtime state/STOP/receipts, Git/publication and real acceptance
+remain controlled. Resolve local failures directly instead of asking the owner
+to retry. Only a genuinely external boundary can remain owner-actionable.

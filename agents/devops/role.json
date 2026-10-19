@@ -10,9 +10,7 @@
   "report_statuses": [
     "passed",
     "changes_requested",
-    "blocked",
-    "completed",
-    "clear"
+    "blocked"
   ],
   "prohibitions": [
     "push",

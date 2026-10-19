@@ -51,7 +51,7 @@ Only the controller schedules workers and mutates team runtime state. Do not
 ## Result contract
 
 Return exactly one JSON object matching the supplied report schema. Required:
- status (passed | changes_requested | blocked | completed | clear), summary
+ status (passed | changes_requested | blocked | incomplete), summary
  (string), evidence (string array), findings (string array), limitations (string
  array), next_action (string), capability_requests (string array containing only
  browser | local_runtime | build_tools). All fields are required; use empty arrays
@@ -151,3 +151,65 @@ identity/history isolation. Reuse already available source/service checks for
 race/idempotency coverage. Separate T54/T55 physical-device and release gates;
 do not make this task wait on their independent historical browser matrices.
 Return a reproducible defect or current evidence; never claim an unrun check.
+
+For a confirmed synthetic LOCAL guest-entry rate limit, do not discard successful
+scenarios or repeatedly create new identities. Reuse run-owned identities through
+legitimate login when possible. If a cooldown is necessary, return blocked with
+no source findings and no capability request; begin next_action exactly with
+WAIT_LOCAL_RATE_LIMIT seconds=N; followed by the incomplete scenario handoff.
+N must be an integer from 1 to 3600, based on an observed Retry-After or the
+inspected local limiter window plus a small margin. Record the local origin,
+actual rate-limit response, timing/window source and remaining scenarios in
+evidence; never print credentials. If the expiry cannot be established, report
+the missing information normally rather than guessing. Never use this protocol
+for production, account quota, permission, legal approval or security denial.
+The coordinator waits without agent calls and allows at most two timed retries
+per task across restarts/source changes. Resume only incomplete scenarios, reuse
+matching builds after provenance checks, and keep unrun acceptance open. Cleanup
+owned runtime/browser processes before returning; do not reset limiter data,
+rotate network identity, weaken controls or keep synthetic sessions in reports.
+
+## Partial execution and bounded continuation
+
+Use incomplete when the owned local runtime/browser works and the only remaining
+work is unfinished assigned scenarios or a repairable QA-artifact harness issue.
+Missing tools use blocked plus capability_requests, reproducible application
+defects use changes_requested plus findings, and owner/legal/production permission
+gates stay blocked. Missing mandatory evidence never becomes passed. This section
+overrides the earlier general blocked rule only for unfinished local execution.
+
+Before execution, read context.previous_reports.qa and context.qa_progress.
+Also inspect context.qa_progress_file: a saved artifact may contain later observed
+results than context.qa_progress if the previous controller transition failed.
+Reconcile its stable scenario IDs with the saved report and referenced browser
+artifacts before execution. Retain those observations only for matching task,
+application and environment scopes; a team-only change requires source review
+but does not erase browser observations. Verify fresh runtime/source provenance
+before further acceptance. Never promote recovered observations to a passing gate.
+Do not repeat a successful scenario for unchanged application/environment scopes.
+When no structured progress exists, use the previous report to identify already
+observed results and target its remaining limitations. Never infer a passed
+scenario from a broad summary, service test or unrelated historical run.
+
+For incomplete, write UTF-8 JSON to context.qa_progress_file before returning:
+{"task":"T60","snapshot":"CURRENT_CONTEXT_SNAPSHOT",
+ "completed":[{"id":"T51.explicit-return","evidence":["Observed browser result and artifact path"]}],
+ "remaining":["T52.expiry-cleanup"]}.
+These are examples only: enumerate every mandatory scenario of the actual assigned
+task/batch using stable IDs and include the existing completed and remaining IDs.
+Give concrete observed evidence per completed scenario. No secrets or private
+content belong in the checklist. Only move IDs from remaining to completed;
+never omit a scenario, rename an ID to manufacture progress, or include unrelated
+physical-device/owner/release gates. The current snapshot and task must match.
+Write the four checklist fields shown above. Copied context metadata is optional:
+the coordinator validates supplied scopes and replaces scopes/report itself.
+Keep build/runtime provenance in the report; current live readiness remains required.
+
+Return incomplete with findings=[] and capability_requests=[] and identify the
+next smallest unfinished scenario in next_action. Clean up owned resources as usual.
+The coordinator allows at most two continuation turns per task across restarts and
+source changes, subject to existing call budgets. Each subsequent incomplete
+result must complete an additional listed scenario; repeated prose is not progress.
+When the stored checklist has pending IDs, a later passed report also requires
+an updated current-snapshot checklist completing all those IDs. Nothing in this
+protocol grants approval or permits skipping a failing or unrun check.

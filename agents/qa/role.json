@@ -13,8 +13,7 @@
     "passed",
     "changes_requested",
     "blocked",
-    "completed",
-    "clear"
+    "incomplete"
   ],
   "prohibitions": [
     "push",

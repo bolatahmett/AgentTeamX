@@ -9,7 +9,8 @@
         "changes_requested",
         "blocked",
         "completed",
-        "clear"
+        "clear",
+        "incomplete"
       ]
     },
     "summary": {
