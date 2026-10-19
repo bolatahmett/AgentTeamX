@@ -363,6 +363,7 @@ class Team:
     def context(self,role):
         return {'role':role,'project':str(self.project),'task':self.state.get('task'),
                 'delivery_batch':self.state.get('delivery_batch'),
+                'delivered_release':self.state.get('delivered_release'),
                 'model_policy':self.worker_model(role),
                 'snapshot':self.state.get('snapshot'),'state_file':str(self.state_path),
                 'deferred_reports':self.state.get('deferred_reports',[]),
@@ -962,6 +963,15 @@ class Team:
                      reason='Coordinator repair completed; reload controller and resume '+role)
         self.event('autonomous_intervention_completed',incident=intervention['incident'],resume_role=role,report=report_path)
 
+    def complete_release(self):
+        """After a verified release, remember what shipped so scheduling cannot re-dispatch it to the developer."""
+        batch=self.state.get('delivery_batch') or {}
+        tasks=set(batch.get('tasks') or [])|({self.state['task']} if self.state.get('task') else set())
+        delivered={'commit':self.state.get('published_commit'),'batch':batch.get('id'),'tasks':sorted(tasks),
+                   'reports':self.state.get('reports',{}),'verified_at':stamp()}
+        self.persist(stage='schedule',receipts={},attempts=0,delivered_release=delivered,
+                     reason='Verified release complete; selecting next ready work')
+
     def begin_release_recovery(self, commit, reason):
         if not re.fullmatch(r'[a-f0-9]{40}',str(commit)) or commit!=self.state.get('published_commit'):
             raise ValueError('Release recovery requires the recorded published commit')
@@ -1127,9 +1137,20 @@ class Team:
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
         if stage=='schedule':
             _,ready=backlog(self.project)
-            if ready:
+            delivered=self.state.get('delivered_release') or {}
+            if ready and ready[0] in delivered.get('tasks',[]) and not delivered.get('planner_routed'):
+                # Released work still open in tasks.md: the planner records the delivered outcome once,
+                # instead of a developer re-run against the batch's already spent delivery budget.
+                # Its own ledger key: the shipped batch's delivery budget is already spent.
+                record={'id':'release-record:'+str(delivered.get('commit'))[:12],'tasks':[],'acceptance_tasks':[]}
+                self.persist(stage='planner',task=ready[0],delivery_batch=record,delivered_release={**delivered,'planner_routed':True},
+                             reason='Released task '+ready[0]+' is still open in tasks.md; planner records the delivered outcome before new work')
+                self.event('delivered_task_routed_to_planner',task=ready[0],commit=delivered.get('commit'))
+                stage='planner'
+            elif ready:
                 batch=delivery_batch(self.project,self.config,ready[0])
-                self.persist(stage='developer',task=ready[0],delivery_batch=batch,attempts=0)
+                self.persist(stage='developer',task=ready[0],delivery_batch=batch,attempts=0,
+                             delivered_release=None if ready[0] not in delivered.get('tasks',[]) else delivered)
                 stage='developer'
             elif self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
                 self.persist(stage='ux_reviewer');stage='ux_reviewer'

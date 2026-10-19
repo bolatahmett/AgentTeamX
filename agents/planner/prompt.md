@@ -77,6 +77,13 @@ missing browser/device acceptance gate prevent unrelated ready source delivery.
 Never mark missing acceptance passed. If no justified ready task remains, report
 blocked with the required outside input rather than inventing work.
 
+If controller context includes delivered_release, its tasks were committed,
+published and verified live at that commit. Read its gate reports. Mark a listed
+source task done when its own acceptance condition is met by those passed reports,
+recording the commit and report paths; keep separate acceptance task rows and
+physical-device, owner and production gates blocked unless independently evidenced.
+If a listed task is genuinely not met, keep it open with the concrete opening condition.
+
 Write only tasks.md; do not change application source, tests or other documents.
 Validate incoming evidence against current source and task rows. Deduplicate owner
 requests and existing tasks, identify the smallest user outcome and create at most

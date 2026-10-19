@@ -141,6 +141,41 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.controller.state['stage'], 'ready_for_commit')
         self.assertEqual(self.controller.state['delivery_calls'][self.controller.config['delivery_epoch'] + ':shared'], 4)
 
+    def released_open_task(self):
+        self.write('tasks.md', '- [ ] **T1 Shipped** | in_progress | Dependencies: None.\n'
+                   '- [ ] **T2 Next** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Shipped but still open')
+        self.controller.config['delivery_batches'] = [{'id': 'shipped', 'tasks': ['T1']}]
+        self.controller.initialize()
+        self.controller.persist(task='T1', delivery_batch={'id': 'shipped', 'tasks': ['T1'], 'acceptance_tasks': []},
+                                published_commit='a' * 40,
+                                delivery_calls={self.controller.config['delivery_epoch'] + ':shipped':
+                                                self.controller.config.get('max_calls_per_delivery', 1000)})
+        self.controller.complete_release()
+        self.assertEqual(self.controller.state['delivered_release']['tasks'], ['T1'])
+
+    def test_released_task_still_open_goes_to_planner_not_developer(self):
+        self.released_open_task()
+        self.effects['planner'] = lambda: self.write('tasks.md', '- [x] **T1 Shipped** | done | Dependencies: None.\n'
+                                                     '- [ ] **T2 Next** | todo | Dependencies: None.\n')
+        self.effects['developer'] = lambda: self.write('app.txt', 'T2 change\n')
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner'])
+        self.assertEqual(self.controller.context('planner')['delivered_release']['commit'], 'a' * 40)
+        self.assertEqual(self.controller.state['stage'], 'schedule')
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner', 'developer'])
+        self.assertEqual(self.controller.state['task'], 'T2')
+        self.assertIsNone(self.controller.state['delivered_release'])
+
+    def test_planner_routing_after_release_happens_only_once(self):
+        self.released_open_task()
+        self.controller.step()  # planner keeps T1 open with a concrete opening condition
+        self.assertEqual(self.roles, ['planner'])
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner'])  # existing delivery budget still guards the re-run
+        self.assertEqual(self.controller.state['attention_kind'], 'delivery_budget')
+
     def test_batch_rejects_unknown_ids_and_oversized_groups(self):
         for tasks in (['T1', 'T999'], ['T1', 'T2', 'T3', 'T4'], ['T1', 'T1']):
             with self.subTest(tasks=tasks), self.assertRaises(ValueError):

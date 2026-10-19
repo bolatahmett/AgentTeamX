@@ -127,7 +127,7 @@ def run():
                                 c.begin_release_recovery(s['published_commit'],'CI/deployment failed; inspect exact release workflow')
                         except Exception as exc:reason=str(exc)
                 elif s['stage']=='release_verified':
-                    c.persist(stage='schedule',receipts={},attempts=0,reason='Verified release complete; selecting next ready work')
+                    c.complete_release()
                 elif s['stage'] not in {'needs_attention','waiting_for_quota','ready_for_commit','release_ready','uninitialized'}:
                     restarts=[t for t in restarts if now-t<3600]
                     if s.get('controller_status')=='running' and not observed_exit:restarts.append(now)
