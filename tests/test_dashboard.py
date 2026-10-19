@@ -94,6 +94,30 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn('reports/',frame)
         self.assertLessEqual(len(frame.splitlines()),42)
 
+    def rich(self,color=False):
+        (self.project/'tasks.md').write_text('- [x] **T1 - Done** | done | Dependencies: None.\n'
+                                             '- [ ] **T2 - Next feature** | todo | Dependencies: T1.\n'
+                                             '- [ ] **T3 - Waiting** | todo | Dependencies: T2.\n',encoding='utf-8')
+        self.write('events.jsonl',''.join(json.dumps(e)+'\n' for e in [
+            {'at':'2026-10-18T00:59:00+00:00','event':'role_started','role':'qa'},
+            {'at':'2026-10-18T00:59:01+00:00','event':'worker_model_selected','role':'qa','engine':'claude','policy':{'model':'m-test','reasoning_effort':'low'}},
+            {'at':'2026-10-18T00:59:30+00:00','event':'local_commit','commit':'a'*40}]))
+        return dashboard.render_rich(dashboard.collect_rich(self.project,self.state,self.now),100,color)
+
+    def test_rich_view_shows_pipeline_backlog_budgets_and_model(self):
+        self.state['delivery_batch']={'id':'T2+T5','tasks':['T2','T5']}
+        frame=self.rich()
+        for text in ('LIVE DETAILS','PIPELINE','BACKLOG','ready 1','T2','Next feature','BUDGETS','m-test','claude','RELEASE','committed','Batch'):
+            self.assertIn(text,frame)
+        self.assertNotIn('T3   Waiting',frame)
+        self.assertNotIn('worker model selected',frame)
+        self.assertNotIn('\033[',frame)
+
+    def test_rich_view_colors_only_when_enabled_and_hides_secrets(self):
+        self.state['reason']='token=PRIVATE_TOKEN';self.state['stage']='needs_attention'
+        frame=self.rich(color=True)
+        self.assertIn('\033[',frame);self.assertNotIn('PRIVATE_TOKEN',frame)
+
     def test_once_watch_is_read_only_and_terminates(self):
         state_file=self.write('state.json',json.dumps(self.state));before=state_file.read_bytes()
         fake=SimpleNamespace(project=self.project,state_path=state_file)

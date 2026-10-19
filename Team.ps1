@@ -103,45 +103,9 @@ function Start-TeamController {
 }
 
 function Show-TeamStatus {
-    $JsonLines = Invoke-TeamCommand -CommandArguments @('status', '--json')
-    $State = ($JsonLines -join [Environment]::NewLine) | ConvertFrom-Json
-    $Line = '=' * 72
-    $Running = if ($State.controller_alive -eq $true) { 'RUNNING' } elseif ($null -eq $State.controller_alive) { 'UNKNOWN' } else { 'STOPPED' }
-    $Agent = if ($State.active_role -and $State.controller_alive -eq $true) { $State.active_role } else { '-' }
-    $StageNames = @{
-        qa='Testing user journeys'; code_reviewer='Reviewing source changes'
-        developer='Implementing changes'; environment_engineer='Preparing test environment'
-        technical_lead='Diagnosing recovery'; devops='Checking release readiness'
-        ready_for_commit='Ready to commit'; release_ready='Ready to publish'
-        published='Waiting for deployment verification'; release_verified='Deployment verified'
-        needs_attention='Needs attention'; waiting_for_quota='Waiting for quota'
-        planner='Planning work'; idle='Waiting for work'; schedule='Selecting next work'
-    }
-    $Stage = if ($StageNames.ContainsKey([string]$State.stage)) { $StageNames[[string]$State.stage] } else { $State.stage }
-    Write-Host "`n$Line" -ForegroundColor DarkCyan
-    Write-Host ('TEAM STATUS   {0}' -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Cyan
-    Write-Host $Line -ForegroundColor DarkCyan
-    Write-Host ('  Team       {0,-12} Task  {1}' -f $Running, $State.task)
-    Write-Host ('  Stage      {0}' -f $Stage)
-    Write-Host ('  Agent      {0}' -f $Agent)
-    Write-Host ('  Website    {0}' -f $State.health.status)
-    Write-Host ('-' * 72) -ForegroundColor DarkGray
-    Write-Host '  Quality gates' -ForegroundColor Cyan
-    foreach ($Role in @('code_reviewer','qa','devops')) {
-        $Receipt = $State.receipts.$Role
-        $Verdict = 'Pending'
-        if ($Receipt -and $Receipt.snapshot -eq $State.snapshot -and $Receipt.report.status -eq 'passed') { $Verdict = 'Passed' }
-        if ($Agent -eq $Role) { $Verdict = 'In progress' }
-        Write-Host ('    {0,-16} {1}' -f $Role, $Verdict)
-    }
-    if ($State.stage -in @('needs_attention','waiting_for_quota')) {
-        Write-Host ('-' * 72) -ForegroundColor DarkGray
-        $Reason = if ($State.reason -like '*changed source*') { 'Source changed during a check; a fresh review is required.' } else { [string]$State.reason }
-        Write-Host ('  Action needed: {0}' -f $Reason) -ForegroundColor Yellow
-    }
-    Write-Host ('-' * 72) -ForegroundColor DarkGray
-    Write-Host '  5 Live activity   |   D Full reports   |   --help All options' -ForegroundColor DarkGray
-    Write-Host "$Line`n" -ForegroundColor DarkCyan
+    # The colored overview lives in dashboard.py (status --pretty); it never starts or stops work.
+    Invoke-TeamCommand -CommandArguments @('status', '--pretty')
+    Write-Host '  5 Live view   |   D Full reports   |   --help All options' -ForegroundColor DarkGray
 }
 
 function Invoke-TeamAction {

@@ -1738,7 +1738,7 @@ def main():
     p=sub.add_parser('initialize');p.add_argument('--adopt-dirty',action='store_true')
     for name in ('start','run-once'):
         p=sub.add_parser(name);p.add_argument('--resume',action='store_true')
-    p=sub.add_parser('status');p.add_argument('--json',action='store_true')
+    p=sub.add_parser('status');p.add_argument('--json',action='store_true');p.add_argument('--pretty',action='store_true')
     sub.add_parser('stop');sub.add_parser('doctor')
     p=sub.add_parser('reports');p.add_argument('--details',action='store_true')
     p=sub.add_parser('watch');p.add_argument('--interval',type=float,default=30);p.add_argument('--once',action='store_true')
@@ -1754,6 +1754,9 @@ def main():
         elif args.command=='status':
             state=team.view()
             if args.json:print(json.dumps(state,indent=2,ensure_ascii=False))
+            elif args.pretty:
+                from dashboard import collect_rich,render_rich,enable_color
+                print(render_rich(collect_rich(team.project,state),shutil.get_terminal_size((100,40)).columns,enable_color()))
             else:
                 for key in ('controller_status','controller_alive','controller_pid','stage','active_role','task','calls','snapshot','last_summary','reason','health','updated','stop_requested','pending_inputs'):print(f'{key}: {state.get(key)}')
         elif args.command=='doctor':
