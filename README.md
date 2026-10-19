@@ -420,3 +420,34 @@ and logged in with `claude auth login`; the desktop app's bundled CLI is not use
 Run `python agent-team/team.py doctor` to verify the claude binary, login and model
 policy.
 Set `engine_failover` to false to return to Codex-only behaviour.
+
+Token budget (2026-10-19): every worker turn used to start by dumping AGENTS.md, agent.md,
+tasks.md (200+ KB, growing), writing-block.md and product-delivery.md. The controller now
+writes artifacts/<role>/task-brief.md (assigned rows, dependency status, open-row index,
+recent work-log entries; capped by task_brief_limit_chars) and prompts point to it via
+context.task_brief_file; whole-file reads are replaced by targeted search. The shared
+context injected into a prompt is limited per role by shared_context_sections in team.json
+(sections not listed there, and the preamble, go to every role). Set shared_context_sections
+to {} to return to the full shared context for all roles.
+
+QA fast paths (2026-10-19): QA is a tiered gate, not a mandatory model turn. qa_tiers.py plus
+Team.qa_fast_path decide from the change since the last QA pass (state.last_qa_pass): tier 0,
+application and environment scopes unchanged: reuse the earlier evidence; tier 1, only non-UI
+application files changed (qa_tiers.ui_paths): the controller runs qa_tiers.source_checks and
+passes the gate on exit 0 (no browser journey is claimed; browser acceptance stays open on its
+task rows); tier 2, UI or acceptance-contract changes, verification-only tasks, batches that
+carry acceptance scenarios and pending continuations: preflight, then a QA-authored suite that
+covers the assignment, then the QA agent. A failed source check or suite never fails a gate by
+itself, it hands the agent the evidence (context.qa_fast_path). A fast path spends no call budget.
+Preflight (qa_tiers.preflight) blocks QA with a typed capability request when git, the dev-tools
+files, a browser or a free loopback port are missing, instead of starting a model turn.
+Suites live in .supervisor/team-v2/artifacts/qa/suites/<id>.json (contract in agents/qa/prompt.md);
+the controller runs script and result_file itself inside an owned Windows job, requires the
+result to name the exact current snapshot and every listed scenario to pass with evidence, and
+requires the suite to cover every scenario ID previously enumerated for the task. Suite
+completeness is QA-authored and not independently reviewed. Set qa_tiers.enabled to false to
+return to a model turn for every QA gate.
+tasks.md scope: the environment scope now hashes the acceptance contract (task definitions and
+acceptance text; not checkbox/status, delivery-record lines or the work log) so task bookkeeping
+no longer voids QA evidence. A one-time migration upgrades stored scopes that still match the
+current files (state.scope_algorithm=2); the full-snapshot fingerprint is unchanged.

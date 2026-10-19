@@ -30,7 +30,7 @@ class EngineTests(unittest.TestCase):
         config = json.loads((source / 'team.json').read_text(encoding='utf-8-sig'))
         self.owner_role_engines = config.get('role_engines', {})
         # Routing tests below assume the Codex-primary default; the owner's split is checked separately.
-        config.update(auto_commit=False, qa_owns_environment=False, autonomous_intervention=False, role_engines={})
+        config.update(auto_commit=False, qa_owns_environment=False, qa_tiers={'enabled': False}, autonomous_intervention=False, role_engines={})
         team.save(self.home / 'team.json', config)
         (self.home / 'report.schema.json').write_text((source / 'report.schema.json').read_text(encoding='utf-8'), encoding='utf-8')
         (self.project / '.gitignore').write_text('.supervisor/\n', encoding='utf-8')

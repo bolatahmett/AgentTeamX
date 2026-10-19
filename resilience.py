@@ -1,12 +1,37 @@
 """Deterministic runtime scopes, checkpoints and failure classification."""
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
-def scopes(files):
+# Evidence lines that record delivery, not the acceptance contract. Editing them must not
+# invalidate QA evidence for unchanged application and environment files.
+DELIVERY_LINE=re.compile(r'^\s*(?:Delivery record|Delivered|Source[ /\w-]*deliver(?:ed|y)|Shared QA update|[\w -]*review repair|Planner opening condition)\b',re.I)
+ROW_LINE=re.compile(r'^- \[[ xX]\] \*\*(T\d+[A-Z]?)\b(.*?)\*\*\s*\|\s*(?:todo|in_progress|blocked|done)\s*\|(.*)$')
+
+
+def tasks_contract_digest(text):
+    """Digest of the acceptance contract in tasks.md.
+
+    Excludes checkbox/status, delivery-record lines and the work log and everything after it, so only
+    a change to the task definitions or acceptance text counts as an environment-scope change."""
+    kept=[]
+    for line in text.replace('\r\n','\n').split('\n'):
+        if line.startswith('## Work log'):break
+        if DELIVERY_LINE.match(line):continue
+        match=ROW_LINE.match(line)
+        if match:line='- **'+match.group(1)+match.group(2)+'** |'+match.group(3).rstrip()
+        kept.append(line.rstrip())
+    return hashlib.sha256('\n'.join(kept).encode('utf-8')).hexdigest()
+
+
+def scopes(files, overrides=None):
+    """Scope digests. overrides maps a file name to the digest to use instead of its content hash."""
+    overrides=overrides or {}
     groups={'application':{},'environment':{},'team':{}}
     for name,digest in files.items():
+        digest=overrides.get(name,digest)
         if name in {'tasks.md','agent.md','AGENTS.md','CLAUDE.md','writing-block.md'} or (
                 name.startswith(('docs/product/','docs/launch/','docs/design/')) and
                 name!='docs/product/agent-team-setup.md'):

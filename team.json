@@ -45,6 +45,40 @@
   },
   "claude_quota_cooldown_seconds": 1800,
   "codex_probe_seconds": 300,
+  "task_brief_limit_chars": 40000,
+  "qa_tiers": {
+    "enabled": true,
+    "ui_paths": ["apps/web/"],
+    "suites": true,
+    "check_timeout_seconds": 900,
+    "shell": ["powershell", "-NoProfile", "-NonInteractive", "-Command"],
+    "source_checks": [
+      {"id": "typecheck", "command": ". ./scripts/use-dev-tools.ps1; pnpm typecheck"},
+      {"id": "lint", "command": ". ./scripts/use-dev-tools.ps1; pnpm lint"},
+      {"id": "test", "command": ". ./scripts/use-dev-tools.ps1; pnpm test"}
+    ],
+    "preflight": {
+      "tools": ["git"],
+      "files": ["scripts/use-dev-tools.ps1", "%APPDATA%/npm/corepack.cmd"],
+      "browser_paths": [
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+        "%LOCALAPPDATA%/Google/Chrome/Application/chrome.exe",
+        "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+        "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+        ".tools/qa-browser"
+      ],
+      "ports_free": [3443]
+    }
+  },
+  "shared_context_sections": {
+    "Product and identity": ["planner", "developer", "code_reviewer", "qa", "ux_reviewer", "technical_lead"],
+    "Work and evidence": ["planner", "developer", "code_reviewer", "qa", "ux_reviewer", "devops", "technical_lead", "environment_engineer"],
+    "Local environment and recovery": ["developer", "qa", "ux_reviewer", "environment_engineer", "technical_lead"],
+    "Local authority and current diagnostics": ["developer", "qa", "environment_engineer", "technical_lead"],
+    "Authorized delivery and resilience update": ["planner", "qa", "devops", "operations", "technical_lead"],
+    "Owner-authorized autonomous intervention": ["technical_lead"]
+  },
   "role_models": {
     "operations": {"model": "gpt-6-luna", "reasoning_effort": "low"},
     "devops": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
@@ -57,6 +91,7 @@
     "technical_lead": {"model": "gpt-6.1-sol", "reasoning_effort": "high"}
   },
   "release_diagnostic_model": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "qa_acceptance_tasks": ["T64"],
   "delivery_batches": [
     {
       "id": "presence-return-20261018",

@@ -64,6 +64,7 @@ class TeamTests(unittest.TestCase):
         config = json.loads((Path(team.__file__).parent / 'team.json').read_text(encoding='utf-8-sig'))
         config['auto_commit'] = False
         config['qa_owns_environment'] = False
+        config['qa_tiers'] = {'enabled': False}
         config['autonomous_intervention'] = False
         config['max_calls_per_delivery'] = 1000
         team.save(self.home / 'team.json', config)
@@ -167,6 +168,20 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.roles, ['planner', 'developer'])
         self.assertEqual(self.controller.state['task'], 'T2')
         self.assertIsNone(self.controller.state['delivered_release'])
+
+    def test_verification_only_task_goes_to_qa_then_planner(self):
+        self.write('tasks.md', '- [ ] **T1 Verify journey** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Verification row')
+        self.controller.config['qa_acceptance_tasks'] = ['T1']
+        self.controller.initialize()
+        self.effects['planner'] = lambda: self.write('tasks.md', '- [x] **T1 Verify journey** | done | Dependencies: None.\n')
+        self.controller.step()
+        self.assertEqual(self.roles, ['qa'])
+        self.assertEqual(self.controller.state['stage'], 'planner')
+        self.assertEqual(self.controller.context('qa')['delivery_batch']['tasks'], ['T1'])
+        self.controller.step()
+        self.assertEqual(self.roles, ['qa', 'planner'])
+        self.assertNotIn('developer', self.roles)
 
     def test_planner_routing_after_release_happens_only_once(self):
         self.released_open_task()
