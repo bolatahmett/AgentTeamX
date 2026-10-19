@@ -193,6 +193,21 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.controller.context('qa')['model_policy'], self.controller.worker_model('qa'))
         self.assertEqual(self.controller.worker_sandbox('devops'), 'read-only')
 
+    def test_read_only_roles_receive_controller_written_review_input(self):
+        self.write('app.txt', 'changed\n')
+        self.write('new.txt', 'fresh\n')
+        self.controller.state['snapshot'] = team.snapshot(self.project)['fingerprint']
+        self.assertIsNone(self.controller.context('qa')['review_input'])
+        self.controller.prepare_review_input('qa')
+        self.controller.prepare_review_input('code_reviewer')
+        paths = self.controller.context('code_reviewer')['review_input']
+        info = json.loads(Path(paths['snapshot_file']).read_text(encoding='utf-8'))
+        self.assertEqual(info['fingerprint'], self.controller.state['snapshot'])
+        self.assertTrue(info['matches_assigned_snapshot'])
+        self.assertIn('+changed', Path(paths['diff_file']).read_text(encoding='utf-8'))
+        self.assertEqual(Path(paths['untracked_file']).read_text(encoding='utf-8').split(), ['new.txt'])
+        self.assertFalse((self.controller.folder / 'artifacts' / 'qa' / 'review-input').exists())
+
     def test_missing_model_policy_inherits_and_invalid_policy_fails(self):
         self.controller.config.pop('role_models')
         self.assertEqual(self.controller.worker_model_args('qa'), [])

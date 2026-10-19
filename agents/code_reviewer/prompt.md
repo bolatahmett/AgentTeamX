@@ -79,3 +79,15 @@ preferences as defects. Report passed only when no actionable issue is found in
 the reviewed scope, changes_requested for bounded repairs, blocked for a missing
 required artifact. State the snapshot identifier in evidence. Passing source review
 is not QA or production approval.
+
+## Review input files
+
+Your shell is restricted to plain `git diff/status/log/show/ls-files` commands;
+compound commands, Python and the fingerprint command are denied. The controller
+writes context.review_input before you start: snapshot_file (live fingerprint,
+head, scopes and whether it matches the assigned snapshot), diff_file (tracked
+changes against HEAD) and untracked_file (untracked source paths). Read them with
+the file tools and cite snapshot_file's fingerprint as the reviewed snapshot. If
+the live fingerprint differs from context.snapshot, report that mismatch instead
+of reviewing. Run each git command separately. Never report blocked merely
+because the fingerprint command is denied.
