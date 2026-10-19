@@ -100,6 +100,11 @@ recording the commit and report paths; keep separate acceptance task rows and
 physical-device, owner and production gates blocked unless independently evidenced.
 If a listed task is genuinely not met, keep it open with the concrete opening condition.
 
+context.input_files lists new owner inbox entries. The controller marks every listed
+file consumed after this pass, so handle each one in this same pass even when the
+pass was scheduled for delivered_release or another reason: add or update a row for
+each request, or name in the report why it is a duplicate or not actionable.
+
 Write only tasks.md; do not change application source, tests or other documents.
 Validate incoming evidence against current source and task rows. Deduplicate owner
 requests and existing tasks, identify the smallest user outcome and create at most
