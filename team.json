@@ -8,11 +8,13 @@
   "environment_max_attempts": 2,
   "max_calls_per_start": 48,
   "ux_interval_hours": 24,
+  "ux_review_enabled": false,
   "operations_interval_seconds": 300,
   "operations_url": "https://sohbetavlusu.com/api/v1/ready",
   "auto_commit": true,
   "allow_push": true,
   "allow_deploy": true,
+  "continue_after_local_commit": true,
   "codex": "codex",
   "default_sandbox": "workspace-write",
   "execution_sandboxes": {
@@ -25,7 +27,7 @@
   "autonomous_intervention": true,
   "intervention_authorization": "owner-2026-10-19",
   "max_interventions_per_incident_hour": 6,
-  "max_interventions_per_hour": 12,
+  "max_interventions_per_hour": 6,
   "publication_authorization": "owner-2026-10-18",
   "worker_inactivity_seconds": 600,
   "qa_owns_environment": true,
@@ -48,6 +50,7 @@
   "task_brief_limit_chars": 40000,
   "qa_tiers": {
     "enabled": true,
+    "mode": "source_only",
     "ui_paths": ["apps/web/"],
     "suites": true,
     "check_timeout_seconds": 900,
@@ -88,10 +91,12 @@
     "environment_engineer": {"model": "gpt-6-sol", "reasoning_effort": "medium"},
     "developer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
     "code_reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-    "technical_lead": {"model": "gpt-6.1-sol", "reasoning_effort": "high"}
+    "technical_lead": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
   },
   "release_diagnostic_model": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "qa_acceptance_tasks": ["T64"],
+  "qa_acceptance_tasks": [],
+  "auto_batch_size": 3,
+  "autonomous_discovery": {"enabled": true, "interval_minutes": 60, "max_interval_hours": 24},
   "delivery_batches": [
     {
       "id": "presence-return-20261018",

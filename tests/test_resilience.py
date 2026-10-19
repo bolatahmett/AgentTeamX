@@ -197,6 +197,14 @@ class ResilienceTests(unittest.TestCase):
         c.config['allow_deploy']=True
         self.assertEqual(guardian.release_action(c),'pushed');self.assertEqual(calls,['exact'])
 
+    def test_disabled_push_continues_delivery_after_local_commit_only_when_configured(self):
+        calls=[]
+        c=SimpleNamespace(state={'stage':'release_ready','commit':'exact'},config={'allow_push':False},
+                          publish=lambda x:self.fail('Push while disabled'),complete_release=lambda **k:calls.append(k))
+        self.assertIsNone(guardian.release_action(c))
+        c.config['continue_after_local_commit']=True
+        self.assertEqual(guardian.release_action(c),'continued');self.assertEqual(calls,[{'local':True}])
+
     def test_workflow_success_requires_both_exact_sha_runs(self):
         rows=[{'workflowName':name,'headSha':'sha','status':'completed','conclusion':'success'} for name in ('Local application checks','Oracle deployment')]
         with patch.object(guardian.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout=json.dumps(rows))):

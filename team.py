@@ -265,7 +265,14 @@ def delivery_batch(project, config, first):
                       if by_id[task]['status'] == 'blocked' and set(by_id[task]['deps']) <= done]
         return {'id': group['id'], 'tasks': [task for task in members if task in ready],
                 'acceptance_tasks': acceptance}
-    return {'id': first, 'tasks': [first], 'acceptance_tasks': []}
+    # Owner-selected auto batching: group the next dependency-ready source tasks (at most three).
+    size = config.get('auto_batch_size', 1)
+    if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 3:
+        raise ValueError('auto_batch_size must be 1-3')
+    grouped = {task for group in config.get('delivery_batches', []) for task in group['tasks']}
+    excluded = grouped | set(config.get('qa_acceptance_tasks', []))
+    tasks = [first] + [task for task in ready if task != first and task not in excluded][:size - 1]
+    return {'id': '+'.join(tasks) if len(tasks) > 1 else first, 'tasks': tasks, 'acceptance_tasks': []}
 
 
 def validate_report(report, role):
@@ -458,6 +465,7 @@ class Team:
                 'model_policy':self.worker_model(role),
                 'snapshot':self.state.get('snapshot'),'state_file':str(self.state_path),
                 'deferred_reports':self.state.get('deferred_reports',[]),
+                'autonomous_discovery':self.state.get('discovery') if role=='planner' and (self.state.get('discovery') or {}).get('active') else None,
                 'recovery':self.state.get('recovery'),
                 'recovery_plan':self.state.get('recovery_plan'),
                 'strategy_failure':self.state.get('strategy_failure'),
@@ -772,12 +780,16 @@ class Team:
         task=self.state.get('task');batch=self.state.get('delivery_batch') or {}
         progress=self.matching_qa_progress()
         pending=bool(progress and progress.get('remaining'))
-        if task in self.config.get('qa_acceptance_tasks',[]):forced='verification-only acceptance task'
+        # Owner-selected source_only mode: every QA gate is the controller's source checks, never a model turn.
+        source_only=cfg.get('mode')=='source_only'
+        if source_only:forced=None
+        elif task in self.config.get('qa_acceptance_tasks',[]):forced='verification-only acceptance task'
         elif batch.get('acceptance_tasks'):forced='delivery batch carries acceptance scenarios'
         elif pending:forced='a QA continuation has pending scenarios'
         else:forced=None
         ui=qa_tiers.ui_digest(current['files'],cfg.get('ui_paths') or ['apps/web/'])
         tier,reason=qa_tiers.classify(self.state.get('last_qa_pass'),current['scopes'],ui,forced)
+        if source_only and tier==2:tier,reason=1,'source_only mode ('+reason+'); browser acceptance deferred'
         info={'tier':tier,'reason':reason,'snapshot':current['fingerprint'],'at':stamp()}
         self.event('qa_tier_selected',tier=tier,reason=reason)
         if tier==0:
@@ -788,7 +800,15 @@ class Team:
             self.persist(qa_fast_path={**info,'source_checks':results})
             if ok:
                 self.qa_tier_used=1;self.free_turn=True
+                if source_only:return qa_tiers.report_source_checks(results,'Owner-selected source_only QA mode: browser acceptance is deferred, not passed.')
                 return qa_tiers.report_source_checks(results)
+            if source_only:
+                failed=[r for r in results if r['exit'] and r.get('log')]
+                if failed and len(failed)==len([r for r in results if r['exit']]):
+                    # A real check failed with a log: hand it to the developer repair flow, no QA model turn.
+                    self.free_turn=True
+                    self.event('qa_source_checks_failed',failed=[r['id'] for r in failed])
+                    return qa_tiers.report_source_failures(self.project,failed)
             self.event('qa_fast_path_fallback',stage='source_checks',failed=[r['id'] for r in results if r['exit']])
             return None
         failures=qa_tiers.preflight(self.project,cfg.get('preflight') or {},shutil.which)
@@ -1069,6 +1089,9 @@ class Team:
                 self.request_recovery(report['capability_requests'][0],role,after['fingerprint'],str(path.relative_to(self.project)))
                 return
             if self.schedule_local_wait(role,report,after,str(path.relative_to(self.project))):return
+            if role=='planner' and (self.state.get('discovery') or {}).get('active'):
+                # A discovery pass that finds nothing justified is not an incident; it backs off quietly.
+                self.persist(stage='schedule',snapshot=after['fingerprint']);self.finish_discovery();return
             _,ready=backlog(self.project)
             # A demonstrated defect needs repair even if acceptance is also blocked.
             if role in GATES and report['findings']:
@@ -1103,6 +1126,7 @@ class Team:
                 self.persist(stage='needs_attention',resume_role=role,reason=report['next_action']);return
             seen=self.state.get('seen_inputs',[])+[key for key,_ in pending]
             self.persist(stage='schedule',seen_inputs=sorted(set(seen)),snapshot=after['fingerprint'])
+            if (self.state.get('discovery') or {}).get('active'):self.finish_discovery()
         elif role=='ux_reviewer':
             self.persist(stage='planner' if report['findings'] else 'schedule',last_ux_snapshot=after['fingerprint'],last_ux_at=time.time(),snapshot=after['fingerprint'])
         elif role=='operations':self.persist(stage='planner' if report['findings'] else 'schedule',pending_operations=False)
@@ -1303,14 +1327,38 @@ class Team:
                      reason='Coordinator repair completed; reload controller and resume '+role)
         self.event('autonomous_intervention_completed',incident=intervention['incident'],resume_role=role,report=report_path)
 
-    def complete_release(self):
-        """After a verified release, remember what shipped so scheduling cannot re-dispatch it to the developer."""
+    def discovery_due(self):
+        """Owner-selected autonomy: with no ready work the planner looks for justified new tasks itself."""
+        cfg=self.config.get('autonomous_discovery') or {}
+        if not cfg.get('enabled') or self.inputs():return False
+        return time.time()>=(self.state.get('discovery') or {}).get('next_at',0)
+
+    def start_discovery(self):
+        discovery={**(self.state.get('discovery') or {}),'active':True,'started_at':stamp()}
+        self.persist(stage='planner',discovery=discovery,task=None,delivery_batch=None,
+                     reason='No ready work; autonomous discovery asks the planner to add justified tasks')
+        self.event('autonomous_discovery_started',empty_passes=discovery.get('empty_passes',0))
+
+    def finish_discovery(self):
+        # Back off when passes add nothing ready, so an exhausted backlog cannot burn paid planner turns.
+        cfg=self.config.get('autonomous_discovery') or {}
+        _,ready=backlog(self.project)
+        empty=0 if ready else (self.state.get('discovery') or {}).get('empty_passes',0)+1
+        base=int(cfg.get('interval_minutes',60))*60
+        delay=min(base*(2**min(empty,6)),int(cfg.get('max_interval_hours',24))*3600) if empty else base
+        self.persist(discovery={'active':False,'empty_passes':empty,'next_at':time.time()+delay,'finished_at':stamp(),'ready':ready[:5]})
+        self.event('autonomous_discovery_finished',ready=ready[:5],empty_passes=empty,next_in_seconds=delay)
+
+    def complete_release(self,local=False):
+        """After a verified release, remember what shipped so scheduling cannot re-dispatch it to the developer.
+        local=True continues after a local commit while push/deploy is disabled; nothing was published."""
         batch=self.state.get('delivery_batch') or {}
         tasks=set(batch.get('tasks') or [])|({self.state['task']} if self.state.get('task') else set())
-        delivered={'commit':self.state.get('published_commit'),'batch':batch.get('id'),'tasks':sorted(tasks),
-                   'reports':self.state.get('reports',{}),'verified_at':stamp()}
+        delivered={'commit':self.state.get('commit' if local else 'published_commit'),'batch':batch.get('id'),'tasks':sorted(tasks),
+                   'reports':self.state.get('reports',{}),'verified_at':stamp(),'local_only':local}
         self.persist(stage='schedule',receipts={},attempts=0,delivered_release=delivered,
-                     reason='Verified release complete; selecting next ready work')
+                     reason='Local commit recorded; push/deploy disabled; selecting next ready work' if local else 'Verified release complete; selecting next ready work')
+        if local:self.event('local_commit_continued',commit=delivered['commit'])
 
     def begin_release_recovery(self, commit, reason):
         if not re.fullmatch(r'[a-f0-9]{40}',str(commit)) or commit!=self.state.get('published_commit'):
@@ -1472,8 +1520,10 @@ class Team:
             self.persist(stage='operations');stage='operations'
         if stage=='idle' and self.inputs():
             self.persist(stage='planner');stage='planner'
-        if stage=='idle' and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
+        if stage=='idle' and self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
             self.persist(stage='ux_reviewer');stage='ux_reviewer'
+        if stage=='idle' and self.discovery_due():
+            self.start_discovery();stage='planner'
         if stage in TERMINAL:return
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
         if stage=='schedule':
@@ -1495,12 +1545,19 @@ class Team:
                 stage='qa'
             elif ready:
                 batch=delivery_batch(self.project,self.config,ready[0])
+                extra=[t for t in batch['tasks'][1:] if t in delivered.get('tasks',[])]
+                if extra and batch['id']=='+'.join(batch['tasks']):
+                    # Auto batches never pull already delivered rows back to the developer.
+                    kept=[t for t in batch['tasks'] if t not in extra]
+                    batch={**batch,'tasks':kept,'id':'+'.join(kept)}
                 self.persist(stage='developer',task=ready[0],delivery_batch=batch,attempts=0,
                              delivered_release=None if ready[0] not in delivered.get('tasks',[]) else delivered)
                 stage='developer'
-            elif self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
+            elif self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
                 self.persist(stage='ux_reviewer');stage='ux_reviewer'
-            else:self.persist(stage='idle',reason='No ready work; waiting for evidence or new owner input');return
+            elif self.discovery_due():
+                self.start_discovery();stage='planner'
+            else:self.persist(stage='idle',reason='No ready work; waiting for evidence, new owner input or the next discovery pass');return
         if stage in GATES and gate_valid(self.state.get('receipts',{}).get(stage),stage,current):
             index=GATES.index(stage)
             self.persist(stage=GATES[index+1] if index+1<len(GATES) else 'ready_for_commit',reason='Reused unchanged scoped '+stage+' evidence')
@@ -1629,7 +1686,10 @@ class Team:
         """Explicit operator action only; never called by a worker or the scheduler."""
         if competing_processes(self.project):raise RuntimeError('Stop all workers before publication')
         snap=snapshot(self.project)
-        if self.state['stage']!='release_ready' or self.state.get('commit')!=commit or snap['head']!=commit or self.state.get('snapshot')!=snap['fingerprint']:
+        local=self.state.get('delivered_release') or {}
+        # A gated local commit that delivery continued past (push disabled) stays publishable while it is still HEAD.
+        held=local.get('local_only') and local.get('commit')==commit and self.state['stage'] in {'idle','schedule'}
+        if not held and (self.state['stage']!='release_ready' or self.state.get('commit')!=commit or self.state.get('snapshot')!=snap['fingerprint']) or snap['head']!=commit:
             raise RuntimeError('Publication requires the exact committed and reviewed release')
         if git(self.project,'status','--porcelain'):raise RuntimeError('Publication requires a clean workspace')
         expected='https://github.com/bolatahmett/AfterDark.git'

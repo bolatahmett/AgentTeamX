@@ -165,14 +165,15 @@ function Invoke-TeamAction {
         }
         'publish' {
             $State = Get-TeamStateForManualAction
-            if ($State.stage -ne 'release_ready') { throw 'Publish requires a reviewed local commit in release_ready.' }
-            if ([string]::IsNullOrWhiteSpace($State.commit)) { throw 'Release commit is missing.' }
-            Write-Host "Release commit: $($State.commit)"
+            $Held = $State.delivered_release
+            $Commit = if ($State.stage -eq 'release_ready') { $State.commit } elseif ($Held -and $Held.local_only -and $State.stage -in @('idle', 'schedule')) { $Held.commit } else { $null }
+            if (-not $Commit) { throw 'Publish requires a reviewed local commit in release_ready, or an idle team holding gated local commits.' }
+            Write-Host "Release commit: $Commit"
             Write-Host "Summary: $($State.last_summary)"
             Write-Warning 'This pushes to origin/main and triggers actual Oracle production deployment.'
             $Confirmation = Read-Host 'Type the full release commit SHA to publish, or Enter to cancel'
-            if ($Confirmation -cne $State.commit) { Write-Host 'Publish cancelled.'; return }
-            Invoke-TeamCommand -CommandArguments @('publish', '--commit', $State.commit, '--confirm-production')
+            if ($Confirmation -cne $Commit) { Write-Host 'Publish cancelled.'; return }
+            Invoke-TeamCommand -CommandArguments @('publish', '--commit', $Commit, '--confirm-production')
         }
         'retry' {
             $State = Get-TeamStateForManualAction

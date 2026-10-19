@@ -171,6 +171,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(full[full.index('--add-dir') + 1], str(self.project))
         self.assertIn('--strict-mcp-config', full)
         self.assertNotIn('--mcp-config', full)
+        self.controller.config['role_models']['technical_lead']['reasoning_effort'] = 'high'
         self.assertEqual(self.controller.claude_args('claude', 'technical_lead', 'danger-full-access')[
             self.controller.claude_args('claude', 'technical_lead', 'danger-full-access').index('--effort') + 1], 'high')
         read_only = self.controller.claude_args('claude', 'code_reviewer', 'read-only')

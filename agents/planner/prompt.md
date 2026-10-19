@@ -80,6 +80,19 @@ missing browser/device acceptance gate prevent unrelated ready source delivery.
 Never mark missing acceptance passed. If no justified ready task remains, report
 blocked with the required outside input rather than inventing work.
 
+If controller context includes autonomous_discovery, the queue has no ready work and
+the owner has authorized the team to find its own next tasks without waiting for
+input. Add up to three bounded ready rows (any kind: product features, UX fixes,
+defects, performance, accessibility, tests or technical debt) justified by
+evidence you cite: docs/product/ roadmap and product contracts, open owner requests
+in tasks.md, recorded UX/QA/review findings and limitations, blocked rows whose
+source work is still undelivered (for example a row with no delivery record), or
+concrete defects observed in current source. Prefer the product priority order and
+features that make conversations richer. Reuse delivered code; never add rows that
+need owner approval, credentials, production writes, legal/market decisions, real
+people or invented usage data, and never duplicate an existing or done row. Report
+completed when rows were added; report clear when nothing is justified.
+
 If controller context includes delivered_release, its tasks were committed,
 published and verified live at that commit. Read its gate reports. Mark a listed
 source task done when its own acceptance condition is met by those passed reports,

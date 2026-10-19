@@ -329,6 +329,46 @@ class ControllerFastPathTests(unittest.TestCase):
         self.assertNotEqual(self.controller.state['stage'], 'devops')
         self.assertIn('snapshot-stability', [c['id'] for c in self.controller.state['qa_fast_path']['source_checks']])
 
+    def source_only(self):
+        self.controller.config['qa_tiers']['mode'] = 'source_only'
+
+    def test_source_only_first_pass_and_ui_change_use_source_checks_without_a_model_turn(self):
+        self.source_only()
+        self.run_chain()
+        self.assertEqual(self.roles, ['code_reviewer', 'devops'])
+        self.assertEqual(self.controller.state['last_qa_pass']['tier'], 1)
+        self.write('apps/web/page.txt', 'ui changed\n')
+        self.rerun_qa()
+        self.assertEqual(self.roles, [])
+        self.assertEqual(self.controller.state['stage'], 'devops')
+        stored = team.load(self.project / self.controller.state['reports']['qa'])
+        self.assertIn('browser acceptance is deferred', stored['report']['summary'])
+
+    def test_source_only_ignores_acceptance_forcing(self):
+        self.source_only()
+        self.run_chain()
+        self.controller.config['qa_acceptance_tasks'] = [self.controller.state.get('task')]
+        self.controller.persist(delivery_batch={'id': 'b', 'tasks': ['T1'], 'acceptance_tasks': ['T2']})
+        self.write('apps/web/page.txt', 'ui changed\n')
+        self.rerun_qa()
+        self.assertEqual(self.roles, [])
+        self.assertEqual(self.controller.state['qa_fast_path']['tier'], 1)
+
+    def test_source_only_failure_requests_developer_repair_without_a_qa_turn(self):
+        self.source_only()
+        self.run_chain()
+        calls = self.controller.state['calls']
+        self.write('app.txt', 'backend only change\n')
+        self.owned_exit['pnpm test'] = 1
+        self.rerun_qa()
+        self.assertEqual(self.roles, [])
+        stored = team.load(self.project / self.controller.state['reports']['qa'])
+        self.assertEqual(stored['report']['status'], 'changes_requested')
+        self.assertIn('Source check test failed', stored['report']['findings'][0])
+        self.assertIn('fake', stored['report']['findings'][0])
+        self.assertEqual(self.controller.state['stage'], 'developer')
+        self.assertEqual(self.controller.state['calls'], calls)
+
     def test_ui_change_needs_browser_acceptance(self):
         self.run_chain()
         self.write('apps/web/page.txt', 'ui changed\n')

@@ -58,6 +58,9 @@ def release_action(controller):
         return 'committed'
     if s['stage']=='release_ready' and c.get('allow_push') and c.get('allow_deploy'):
         controller.publish(s['commit']);return 'pushed'
+    if s['stage']=='release_ready' and c.get('continue_after_local_commit'):
+        # Push/deploy disabled: keep delivering on local commits; publication stays an explicit operator action.
+        controller.complete_release(local=True);return 'continued'
     return None
 
 

@@ -451,3 +451,40 @@ tasks.md scope: the environment scope now hashes the acceptance contract (task d
 acceptance text; not checkbox/status, delivery-record lines or the work log) so task bookkeeping
 no longer voids QA evidence. A one-time migration upgrades stored scopes that still match the
 current files (state.scope_algorithm=2); the full-snapshot fingerprint is unchanged.
+
+
+## Owner feature-focus mode - 2026-10-19
+
+Owner-selected to deliver features faster with fewer model calls. Revert each line to restore
+the earlier behaviour.
+
+- `qa_tiers.mode: "source_only"`: every QA gate is the controller's typecheck/lint/test run and
+  never a QA model turn, including UI changes, `qa_acceptance_tasks`, batches with acceptance
+  scenarios and pending continuations. A passing report says browser acceptance is deferred, not
+  passed; browser, device and owner acceptance stay open on their task rows. A check that fails
+  with a log returns changes_requested with the log tail, so the developer repairs it without a QA
+  turn; a host/definition/snapshot-stability failure still falls back to the QA agent. Remove
+  `mode` to return to tiered QA.
+- `allow_push`/`allow_deploy` are back to true (owner, 2026-10-19): every gated local commit,
+  including DevOps release repairs, is pushed and deployed automatically again. If they are set
+  to false, `continue_after_local_commit: true` keeps delivering on local commits instead of
+  parking in release_ready, and the helper publish action accepts an idle team whose last
+  local-only delivery is still HEAD.
+- `ux_review_enabled: false`: no scheduled UX review turns.
+- `auto_batch_size: 3`: a ready task outside `delivery_batches` is grouped with up to two further
+  dependency-ready rows of any kind (features, fixes, tests, debt; never explicit-batch members,
+  `qa_acceptance_tasks` or already delivered rows) into one developer turn and one gate chain.
+  Fewer ready rows simply make a smaller batch.
+- technical_lead effort high -> medium and `max_interventions_per_hour` 12 -> 6. code_reviewer
+  stays at medium because it is now the only model gate on source changes.
+- `qa_acceptance_tasks` is empty; T64 is already done.
+
+## Autonomous task discovery - 2026-10-19
+
+Owner-selected: the team runs without waiting for the owner. With `autonomous_discovery.enabled`,
+a schedule or idle stage with no ready rows and no pending inbox schedules the planner with
+context.autonomous_discovery. The planner may add up to three evidence-backed ready rows of any
+kind (see agents/planner/prompt.md); it never adds rows needing owner approval, credentials,
+production writes or invented data. A pass that adds no ready row (clear or blocked) is not an
+incident: it backs off exponentially from `interval_minutes` (60) up to `max_interval_hours` (24)
+and resets once ready work exists. Events: autonomous_discovery_started/finished.

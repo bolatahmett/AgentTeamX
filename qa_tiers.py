@@ -95,13 +95,36 @@ def report_unchanged(last):
                    next_action='Continue to the next gate; the controller keeps the snapshot-bound receipts.')
 
 
-def report_source_checks(results):
+def report_source_checks(results, scope='Only non-UI application files changed since the last QA pass.'):
     evidence = ['%s: exit %s in %ss (log %s)' % (r['id'], r['exit'], r['seconds'], r['log']) for r in results]
     return _report('passed',
                    'Controller-run source checks passed on the exact current snapshot (' + ', '.join(r['id'] for r in results) + '). '
-                   'Only non-UI application files changed since the last QA pass.',
+                   + scope,
                    evidence, limitations=GATES_NOT_COVERED,
                    next_action='Continue to the next gate; browser acceptance stays open on its task rows.')
+
+
+def log_tail(path, lines=25, limit=4000):
+    """Last lines of a check log for a repair finding; empty when unreadable."""
+    try:
+        text = Path(path).read_bytes()[-65536:].decode('utf-8', errors='replace')
+    except OSError:
+        return ''
+    return '\n'.join(text.strip().splitlines()[-lines:])[-limit:]
+
+
+def report_source_failures(project, failed):
+    """source_only mode: a failed source check is a developer repair, not a QA model turn."""
+    findings = []
+    for r in failed:
+        tail = log_tail(Path(project) / r['log'])
+        findings.append('Source check %s failed with exit %s (log %s). Fix the cause and keep the check passing.%s'
+                        % (r['id'], r['exit'], r['log'], ('\nLog tail:\n' + tail) if tail else ''))
+    return _report('changes_requested',
+                   'Controller-run source checks failed on the exact current snapshot (' + ', '.join(r['id'] for r in failed) + ').',
+                   ['%s: exit %s in %ss (log %s)' % (r['id'], r['exit'], r['seconds'], r['log']) for r in failed],
+                   findings=findings, limitations=GATES_NOT_COVERED,
+                   next_action='Developer repairs the failing source checks; QA reruns them on the repaired snapshot.')
 
 
 def report_suite(manifest, outcome, seconds):

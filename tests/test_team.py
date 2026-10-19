@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -127,6 +128,62 @@ class TeamTests(unittest.TestCase):
         result = team.delivery_batch(self.project, config, 'T2')
         self.assertEqual(result, {'id': 'shared', 'tasks': ['T2', 'T3'], 'acceptance_tasks': ['T4']})
         self.assertEqual(team.delivery_batch(self.project, config, 'T1')['tasks'], ['T1'])
+
+    def discovery_setup(self):
+        self.controller.config['autonomous_discovery'] = {'enabled': True, 'interval_minutes': 60, 'max_interval_hours': 24}
+        self.controller.config['ux_review_enabled'] = False
+        self.write('tasks.md', '- [x] **T1 Work** | done | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Done')
+        self.controller.initialize(adopt=False)
+
+    def test_discovery_planner_adds_work_when_queue_is_empty(self):
+        self.discovery_setup()
+        seen = {}
+
+        def add_row():
+            seen['context'] = self.controller.context('planner')['autonomous_discovery']
+            self.write('tasks.md', '- [x] **T1 Work** | done | Dependencies: None.\n'
+                       '- [ ] **T2 New** | todo | Dependencies: T1.\n')
+        self.effects['planner'] = add_row
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner'])
+        self.assertTrue(seen['context']['active'])
+        discovery = self.controller.state['discovery']
+        self.assertFalse(discovery['active'])
+        self.assertEqual(discovery['empty_passes'], 0)
+        self.assertEqual(discovery['ready'], ['T2'])
+
+    def test_empty_discovery_backs_off_without_attention(self):
+        self.discovery_setup()
+        self.responses['planner'] = report('blocked')
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner'])
+        self.assertNotEqual(self.controller.state['stage'], 'needs_attention')
+        first = self.controller.state['discovery']
+        self.assertEqual(first['empty_passes'], 1)
+        self.assertGreater(first['next_at'], time.time() + 3600)
+        self.controller.step()
+        self.controller.step()
+        self.assertEqual(self.roles, ['planner'])
+        self.assertEqual(self.controller.state['stage'], 'idle')
+
+    def test_auto_batch_groups_next_ready_tasks_without_explicit_or_acceptance_rows(self):
+        self.write('tasks.md', '\n'.join([
+            '- [x] **T1 Done** | done | Dependencies: None.',
+            '- [ ] **T2 First** | todo | Dependencies: T1.',
+            '- [ ] **T3 Grouped** | todo | Dependencies: T1.',
+            '- [ ] **T4 Verify** | todo | Dependencies: T1.',
+            '- [ ] **T5 Second** | todo | Dependencies: T1.',
+            '- [ ] **T6 Third** | todo | Dependencies: T1.',
+            '- [ ] **T7 Unready** | todo | Dependencies: T6.',
+        ]))
+        config = {'auto_batch_size': 3, 'qa_acceptance_tasks': ['T4'],
+                  'delivery_batches': [{'id': 'explicit', 'tasks': ['T3']}]}
+        self.assertEqual(team.delivery_batch(self.project, config, 'T2'),
+                         {'id': 'T2+T5+T6', 'tasks': ['T2', 'T5', 'T6'], 'acceptance_tasks': []})
+        self.assertEqual(team.delivery_batch(self.project, {}, 'T2')['tasks'], ['T2'])
+        with self.assertRaises(ValueError):
+            team.delivery_batch(self.project, {'auto_batch_size': 4}, 'T2')
 
     def test_batch_uses_one_developer_and_one_gate_chain(self):
         self.write('tasks.md', '- [ ] **T1 First** | todo | Dependencies: None.\n'
