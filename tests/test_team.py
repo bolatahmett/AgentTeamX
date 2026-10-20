@@ -167,6 +167,40 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.roles, ['planner'])
         self.assertEqual(self.controller.state['stage'], 'idle')
 
+    def test_committed_tasks_are_not_dispatched_again(self):
+        self.write('tasks.md', '- [ ] **T1 Work** | in_progress | Dependencies: None.\n'
+                   '- [ ] **T2 Next** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Rows')
+        self.controller.initialize(adopt=False)
+        self.controller.persist(released_tasks=['T1'])
+        self.controller.config['auto_batch_size'] = 3
+        self.effects['developer'] = lambda: self.write('app.txt', 'T2 change\n')
+        self.controller.step()
+        self.assertEqual(self.controller.state['task'], 'T2')
+        self.assertEqual(self.controller.state['delivery_batch']['tasks'], ['T2'])
+
+    def test_released_tasks_prune_when_done_and_reopen_on_request(self):
+        self.write('tasks.md', '- [x] **T1 Work** | done | Dependencies: None.\n'
+                   '- [ ] **T2 Next** | in_progress | Dependencies: None.\n')
+        self.controller.persist(released_tasks=['T1', 'T2'])
+        self.assertEqual(self.controller.schedulable(['T2']), [])
+        self.assertEqual(self.controller.state['released_tasks'], ['T2'])
+        self.controller.reopen('T2')
+        self.assertEqual(self.controller.schedulable(['T2']), ['T2'])
+        with self.assertRaises(ValueError):
+            self.controller.reopen('T2')
+
+    def test_local_commit_records_released_tasks_and_cadence(self):
+        snapshot = self.approvals()
+        self.controller.persist(delivery_batch={'id': 'T1', 'tasks': ['T1']})
+        self.controller.commit(snapshot, 'Deliver T1')
+        self.assertIn('T1', self.controller.state['released_tasks'])
+        self.controller.config['publish_min_interval_hours'] = 24
+        self.controller.persist(last_publication_at=time.time() - 3600)
+        self.assertFalse(self.controller.publish_due())
+        self.controller.persist(last_publication_at=time.time() - 25 * 3600)
+        self.assertTrue(self.controller.publish_due())
+
     def test_auto_batch_groups_next_ready_tasks_without_explicit_or_acceptance_rows(self):
         self.write('tasks.md', '\n'.join([
             '- [x] **T1 Done** | done | Dependencies: None.',
@@ -244,9 +278,11 @@ class TeamTests(unittest.TestCase):
         self.released_open_task()
         self.controller.step()  # planner keeps T1 open with a concrete opening condition
         self.assertEqual(self.roles, ['planner'])
+        self.effects['developer'] = lambda: self.write('app.txt', 'T2 change\n')
         self.controller.step()
-        self.assertEqual(self.roles, ['planner'])  # existing delivery budget still guards the re-run
-        self.assertEqual(self.controller.state['attention_kind'], 'delivery_budget')
+        # The shipped row stays open for deferred acceptance but is never sent back to the developer.
+        self.assertEqual(self.roles, ['planner', 'developer'])
+        self.assertEqual(self.controller.state['task'], 'T2')
 
     def test_batch_rejects_unknown_ids_and_oversized_groups(self):
         for tasks in (['T1', 'T999'], ['T1', 'T2', 'T3', 'T4'], ['T1', 'T1']):

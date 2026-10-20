@@ -1092,7 +1092,7 @@ class Team:
             if role=='planner' and (self.state.get('discovery') or {}).get('active'):
                 # A discovery pass that finds nothing justified is not an incident; it backs off quietly.
                 self.persist(stage='schedule',snapshot=after['fingerprint']);self.finish_discovery();return
-            _,ready=backlog(self.project)
+            ready=self.schedulable(backlog(self.project)[1])
             # A demonstrated defect needs repair even if acceptance is also blocked.
             if role in GATES and report['findings']:
                 self.request_source_repair(role,report)
@@ -1327,6 +1327,41 @@ class Team:
                      reason='Coordinator repair completed; reload controller and resume '+role)
         self.event('autonomous_intervention_completed',incident=intervention['incident'],resume_role=role,report=report_path)
 
+    def publish_due(self):
+        """Owner-selected cadence: at most one push/deployment per publish_min_interval_hours."""
+        hours=float(self.config.get('publish_min_interval_hours',0) or 0)
+        last=self.state.get('last_publication_at')
+        if last is None and self.state.get('publication_started_at'):
+            try:last=dt.datetime.fromisoformat(self.state['publication_started_at']).timestamp()
+            except (TypeError,ValueError):last=None
+        return time.time()-float(last or 0)>=hours*3600
+
+    def held_release(self):
+        """The gated local commit an idle team may publish, or None."""
+        held=self.state.get('delivered_release') or {}
+        if not held.get('local_only') or self.state.get('stage')!='idle':return None
+        if git(self.project,'rev-parse','HEAD').decode().strip()!=held.get('commit'):return None
+        if git(self.project,'status','--porcelain'):return None
+        return held['commit']
+
+    def schedulable(self,ready):
+        """Ready rows minus tasks whose source was already committed in a gated delivery.
+        Such rows can stay open for deferred browser/owner acceptance; re-dispatching them to the
+        developer only produces no-change turns, so delivery work never selects them again."""
+        if not self.config.get('skip_released_tasks',True):return ready
+        released=set(self.state.get('released_tasks') or [])
+        if released:
+            # Done rows need no memory; `team.py reopen --task ID` re-enables a row for real rework.
+            done={r['id'] for r in backlog(self.project)[0] if r['checked']}
+            if released&done:self.persist(released_tasks=sorted(released-done));released-=done
+        return [t for t in ready if t not in released]
+
+    def reopen(self,task):
+        released=set(self.state.get('released_tasks') or [])
+        if task not in released:raise ValueError(task+' is not recorded as released')
+        self.persist(released_tasks=sorted(released-{task}))
+        self.event('released_task_reopened',task=task)
+
     def discovery_due(self):
         """Owner-selected autonomy: with no ready work the planner looks for justified new tasks itself."""
         cfg=self.config.get('autonomous_discovery') or {}
@@ -1342,7 +1377,7 @@ class Team:
     def finish_discovery(self):
         # Back off when passes add nothing ready, so an exhausted backlog cannot burn paid planner turns.
         cfg=self.config.get('autonomous_discovery') or {}
-        _,ready=backlog(self.project)
+        ready=self.schedulable(backlog(self.project)[1])
         empty=0 if ready else (self.state.get('discovery') or {}).get('empty_passes',0)+1
         base=int(cfg.get('interval_minutes',60))*60
         delay=min(base*(2**min(empty,6)),int(cfg.get('max_interval_hours',24))*3600) if empty else base
@@ -1356,7 +1391,8 @@ class Team:
         tasks=set(batch.get('tasks') or [])|({self.state['task']} if self.state.get('task') else set())
         delivered={'commit':self.state.get('commit' if local else 'published_commit'),'batch':batch.get('id'),'tasks':sorted(tasks),
                    'reports':self.state.get('reports',{}),'verified_at':stamp(),'local_only':local}
-        self.persist(stage='schedule',receipts={},attempts=0,delivered_release=delivered,
+        released=sorted(set(self.state.get('released_tasks') or [])|tasks)
+        self.persist(stage='schedule',receipts={},attempts=0,delivered_release=delivered,released_tasks=released,
                      reason='Local commit recorded; push/deploy disabled; selecting next ready work' if local else 'Verified release complete; selecting next ready work')
         if local:self.event('local_commit_continued',commit=delivered['commit'])
 
@@ -1527,8 +1563,10 @@ class Team:
         if stage in TERMINAL:return
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
         if stage=='schedule':
-            _,ready=backlog(self.project)
+            raw=backlog(self.project)[1]
             delivered=self.state.get('delivered_release') or {}
+            # The planner gets one pass to record a just-delivered open row; afterwards it is never re-dispatched.
+            ready=raw if raw and raw[0] in delivered.get('tasks',[]) and not delivered.get('planner_routed') else self.schedulable(raw)
             if ready and ready[0] in delivered.get('tasks',[]) and not delivered.get('planner_routed'):
                 # Released work still open in tasks.md: the planner records the delivered outcome once,
                 # instead of a developer re-run against the batch's already spent delivery budget.
@@ -1545,7 +1583,7 @@ class Team:
                 stage='qa'
             elif ready:
                 batch=delivery_batch(self.project,self.config,ready[0])
-                extra=[t for t in batch['tasks'][1:] if t in delivered.get('tasks',[])]
+                extra=[t for t in batch['tasks'][1:] if t in delivered.get('tasks',[]) or t not in ready]
                 if extra and batch['id']=='+'.join(batch['tasks']):
                     # Auto batches never pull already delivered rows back to the developer.
                     kept=[t for t in batch['tasks'] if t not in extra]
@@ -1677,7 +1715,11 @@ class Team:
         if snapshot(self.project)['fingerprint']!=expected:raise RuntimeError('Source changed while staging; commit refused, inspect index')
         git(self.project,'commit','-m',message)
         head=git(self.project,'rev-parse','HEAD').decode().strip()
-        self.persist(stage='release_ready',commit=head,snapshot=snapshot(self.project)['fingerprint'],reason='Local commit created; no push/deploy was performed')
+        batch=self.state.get('delivery_batch') or {}
+        committed=set(batch.get('tasks') or [])|({self.state['task']} if self.state.get('task') else set())
+        self.persist(stage='release_ready',commit=head,snapshot=snapshot(self.project)['fingerprint'],
+                     released_tasks=sorted(set(self.state.get('released_tasks') or [])|committed),
+                     reason='Local commit created; no push/deploy was performed')
         self.event('local_commit',commit=head,reviewed_snapshot=expected)
         return head
 
@@ -1698,7 +1740,7 @@ class Team:
         remote_head=git(self.project,'ls-remote','origin','refs/heads/main').decode().split()[0]
         git(self.project,'merge-base','--is-ancestor',remote_head,commit)
         git(self.project,'push','origin',commit+':refs/heads/main')
-        self.persist(stage='published',published_commit=commit,publication_started_at=stamp(),reason='Push completed; GitHub CI/deployment and actual production acceptance are still pending')
+        self.persist(stage='published',published_commit=commit,publication_started_at=stamp(),last_publication_at=time.time(),reason='Push completed; GitHub CI/deployment and actual production acceptance are still pending')
         self.event('explicit_owner_publication',commit=commit)
         return commit
 
@@ -1743,6 +1785,7 @@ def main():
     p=sub.add_parser('reports');p.add_argument('--details',action='store_true')
     p=sub.add_parser('watch');p.add_argument('--interval',type=float,default=30);p.add_argument('--once',action='store_true')
     p=sub.add_parser('inbox');p.add_argument('--text',required=True)
+    p=sub.add_parser('reopen');p.add_argument('--task',required=True)
     sub.add_parser('retry');sub.add_parser('next');sub.add_parser('recover');sub.add_parser('recover-release')
     p=sub.add_parser('commit');p.add_argument('--snapshot',required=True);p.add_argument('--message',required=True)
     p=sub.add_parser('publish');p.add_argument('--commit',required=True);p.add_argument('--confirm-production',action='store_true',required=True)
@@ -1771,6 +1814,8 @@ def main():
         elif args.command=='inbox':
             text=validate_intake(args.text)
             p=team.folder/'inbox'/(uuid.uuid4().hex+'.json');save(p,{'source':'owner_helper','recorded_at':stamp(),'text':text});print('Queued:',p.name)
+        elif args.command=='reopen':
+            team.reopen(args.task);print('Reopened '+args.task+' for developer scheduling; no worker was started.')
         elif args.command=='retry':
             team.retry()
         elif args.command=='recover-release':

@@ -205,6 +205,19 @@ class ResilienceTests(unittest.TestCase):
         c.config['continue_after_local_commit']=True
         self.assertEqual(guardian.release_action(c),'continued');self.assertEqual(calls,[{'local':True}])
 
+    def test_publish_cadence_holds_commits_until_due_then_pushes(self):
+        calls=[]
+        c=SimpleNamespace(state={'stage':'release_ready','commit':'exact'},config={'allow_push':True,'allow_deploy':True},
+                          publish=lambda x:calls.append(('push',x)),complete_release=lambda **k:calls.append(('held',k)),
+                          publish_due=lambda:False,held_release=lambda:'exact')
+        self.assertEqual(guardian.release_action(c),'continued');self.assertEqual(calls,[('held',{'local':True})])
+        c.state={'stage':'idle'};calls.clear()
+        self.assertIsNone(guardian.release_action(c));self.assertEqual(calls,[])
+        c.publish_due=lambda:True
+        self.assertEqual(guardian.release_action(c),'pushed held commits');self.assertEqual(calls,[('push','exact')])
+        c.state={'stage':'release_ready','commit':'next'};calls.clear()
+        self.assertEqual(guardian.release_action(c),'pushed');self.assertEqual(calls,[('push','next')])
+
     def test_workflow_success_requires_both_exact_sha_runs(self):
         rows=[{'workflowName':name,'headSha':'sha','status':'completed','conclusion':'success'} for name in ('Local application checks','Oracle deployment')]
         with patch.object(guardian.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout=json.dumps(rows))):

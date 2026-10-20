@@ -14,6 +14,8 @@
   "auto_commit": true,
   "allow_push": true,
   "allow_deploy": true,
+  "publish_min_interval_hours": 24,
+  "skip_released_tasks": true,
   "continue_after_local_commit": true,
   "codex": "codex",
   "default_sandbox": "workspace-write",

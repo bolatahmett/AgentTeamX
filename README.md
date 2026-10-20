@@ -488,3 +488,20 @@ kind (see agents/planner/prompt.md); it never adds rows needing owner approval, 
 production writes or invented data. A pass that adds no ready row (clear or blocked) is not an
 incident: it backs off exponentially from `interval_minutes` (60) up to `max_interval_hours` (24)
 and resets once ready work exists. Events: autonomous_discovery_started/finished.
+
+## Delivery speed and daily publishing - 2026-10-20
+
+Owner-selected. `skip_released_tasks: true`: every task in a gated local commit is recorded in
+state.released_tasks. Scheduling (and auto batches) never sends those rows to the developer again,
+even when tasks.md keeps them open for deferred browser/owner acceptance; the planner still gets its
+one delivered_release pass. Rows that reach done are pruned from the list automatically; for real rework on an
+open released row run `python agent-team/team.py reopen --task T62`. Blocked-report routing uses the
+same schedulable list, so released rows never count as independent ready work. This removes the no-change developer -> environment -> technical lead
+loops that previously consumed most of the wall-clock time.
+
+`publish_min_interval_hours: 24`: the guardian pushes and deploys at most once per 24 hours. Before
+that, each gated commit stays local (release_ready -> continue) and delivery goes on. The first
+release_ready after the interval, or an idle team whose HEAD is the last gated local commit with a
+clean tree, publishes HEAD, which carries every earlier gated commit. state.last_publication_at
+records the cadence. Deployment applies pending migrations after a verified backup
+(docs/launch/oracle-deployment.md).

@@ -56,10 +56,16 @@ def release_action(controller):
     if s['stage']=='ready_for_commit' and c.get('auto_commit'):
         controller.commit(s['snapshot'],'Deliver '+str(s.get('task') or 'reviewed application changes'))
         return 'committed'
-    if s['stage']=='release_ready' and c.get('allow_push') and c.get('allow_deploy'):
+    publishing=c.get('allow_push') and c.get('allow_deploy')
+    due=controller.publish_due() if hasattr(controller,'publish_due') else True
+    if s['stage']=='release_ready' and publishing and due:
         controller.publish(s['commit']);return 'pushed'
-    if s['stage']=='release_ready' and c.get('continue_after_local_commit'):
-        # Push/deploy disabled: keep delivering on local commits; publication stays an explicit operator action.
+    if s['stage']=='idle' and publishing and due and hasattr(controller,'held_release'):
+        held=controller.held_release()
+        if held:controller.publish(held);return 'pushed held commits'
+    if s['stage']=='release_ready' and (c.get('continue_after_local_commit') or publishing):
+        # Not due yet (or push disabled): keep delivering on gated local commits; the next due
+        # publication pushes HEAD, which carries every earlier gated commit with it.
         controller.complete_release(local=True);return 'continued'
     return None
 
