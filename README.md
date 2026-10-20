@@ -380,6 +380,11 @@ waiting stage and no manual retry. When Claude is exhausted the work goes back t
 Codex, whichever has quota. Only when both are exhausted does the existing
 waiting_for_quota stage apply.
 
+Owner UX update - 2026-10-20: the developer is Codex-first again so the UX modernization
+queue (T88-T103) runs on `gpt-6.1-sol`; QA and ux_reviewer also use `gpt-6.1-sol`;
+`auto_batch_size` is 1 so pages are delivered one at a time; T103 is the verification-only
+QA row. Completed rows were archived to docs/history/tasks-archive-20261020.md.
+
 Owner role split - 2026-10-19: `role_engines` makes developer, technical_lead and
 code_reviewer Claude-first; all other roles stay Codex-first. The split applies while
 both engines have quota; a Claude-first role falls back to Codex on Claude plan

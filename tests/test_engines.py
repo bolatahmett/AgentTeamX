@@ -144,7 +144,8 @@ class EngineTests(unittest.TestCase):
             self.controller.engine_candidates('qa')
 
     def test_owner_split_runs_build_and_review_roles_on_claude_and_rest_on_codex(self):
-        self.assertEqual(self.owner_role_engines, {'developer': 'claude', 'technical_lead': 'claude', 'code_reviewer': 'claude'})
+        # Owner UX update 2026-10-20: the developer is Codex-first (gpt-6.1-sol); review and lead stay Claude-first.
+        self.assertEqual(self.owner_role_engines, {'technical_lead': 'claude', 'code_reviewer': 'claude'})
         self.controller.config['role_engines'] = self.owner_role_engines
         for role in team.ROLES:
             expected = ['claude', 'codex'] if role in self.owner_role_engines else ['codex', 'claude']
@@ -157,7 +158,7 @@ class EngineTests(unittest.TestCase):
                 raise RuntimeError('QUOTA_LIMIT: wait')
             return report()
         with patch.object(self.controller, 'run_worker_engine', side_effect=fake):
-            self.assertEqual(self.controller.run_worker('developer')['status'], 'passed')
+            self.assertEqual(self.controller.run_worker('code_reviewer')['status'], 'passed')
         self.assertEqual(calls, ['claude', 'codex'])
         self.assertIn('claude', self.controller.state['engines'])
 

@@ -355,7 +355,7 @@ class TeamTests(unittest.TestCase):
         self.controller.state['release_recovery'] = {'active': True}
         self.assertEqual(self.controller.worker_model('devops')['model'], 'gpt-6.1-sol')
         self.assertEqual(self.controller.worker_model_args('qa'),
-                         ['--model', 'gpt-6-sol', '-c', 'model_reasoning_effort="medium"'])
+                         ['--model', 'gpt-6.1-sol', '-c', 'model_reasoning_effort="medium"'])
         self.assertEqual(self.controller.context('qa')['model_policy'], self.controller.worker_model('qa'))
         self.assertEqual(self.controller.worker_sandbox('devops'), 'read-only')
 
@@ -643,7 +643,7 @@ class TeamTests(unittest.TestCase):
         fake.poll.return_value = 1
 
         def spawn(args, **kwargs):
-            self.assertEqual(args[args.index('--model') + 1], 'gpt-6-sol')
+            self.assertEqual(args[args.index('--model') + 1], 'gpt-6.1-sol')
             self.assertIn('model_reasoning_effort="medium"', args)
             team.save(Path(args[args.index('-o') + 1]), report())
             return fake
