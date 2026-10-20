@@ -92,6 +92,9 @@ features that make conversations richer. Reuse delivered code; never add rows th
 need owner approval, credentials, production writes, legal/market decisions, real
 people or invented usage data, and never duplicate an existing or done row. Report
 completed when rows were added; report clear when nothing is justified.
+context.released_tasks lists rows whose source was already committed through the review
+gates; the controller never schedules them for the developer again. They are not queued
+work: an open released row does not mean the queue is full, so look past them for new work.
 
 If controller context includes delivered_release, its tasks were committed,
 published and verified live at that commit. Read its gate reports. Mark a listed

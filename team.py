@@ -466,6 +466,7 @@ class Team:
                 'snapshot':self.state.get('snapshot'),'state_file':str(self.state_path),
                 'deferred_reports':self.state.get('deferred_reports',[]),
                 'autonomous_discovery':self.state.get('discovery') if role=='planner' and (self.state.get('discovery') or {}).get('active') else None,
+                'released_tasks':self.state.get('released_tasks',[]) if role=='planner' else None,
                 'recovery':self.state.get('recovery'),
                 'recovery_plan':self.state.get('recovery_plan'),
                 'strategy_failure':self.state.get('strategy_failure'),
