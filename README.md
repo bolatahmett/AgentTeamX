@@ -505,3 +505,13 @@ release_ready after the interval, or an idle team whose HEAD is the last gated l
 clean tree, publishes HEAD, which carries every earlier gated commit. state.last_publication_at
 records the cadence. Deployment applies pending migrations after a verified backup
 (docs/launch/oracle-deployment.md).
+
+## Budgets never stop delivery - 2026-10-20
+
+Owner-selected. With `park_exhausted_tasks: true`, a task or batch that reaches
+`max_calls_per_delivery` (now 40) is recorded in state.parked_tasks and the scheduler moves to other
+ready work instead of entering needs_attention. Parked rows are skipped like released rows, passed to
+the planner (context.parked_tasks, which may split them into smaller rows) and re-enabled with
+`python agent-team/team.py reopen --task ID`. Release recovery keeps its own budget and still escalates.
+Safety nets were raised: 100 calls per controller start, 10 repair calls per incident and 30 per hour.
+A repair window that is full is a timed wait that resumes automatically, not a stop.

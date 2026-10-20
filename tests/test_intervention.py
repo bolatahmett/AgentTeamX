@@ -120,6 +120,8 @@ class InterventionTests(unittest.TestCase):
     def stalled(self):
         self.adopted();c=self.controller
         c.config['autonomous_intervention']=True
+        # These scenarios exercise the hourly window itself, so pin the historical caps.
+        c.config.update(max_interventions_per_incident_hour=6,max_interventions_per_hour=12,park_exhausted_tasks=False)
         team.save(c.home/'team.json',c.config)
         c.step()
         c.persist(stage='needs_attention',resume_role='qa',attention_kind='worker_failure',

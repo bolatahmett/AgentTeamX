@@ -344,7 +344,7 @@ def collect_rich(project, state, now=None):
         if e.get('event')=='worker_model_selected':models[e.get('role')]={**(e.get('policy') or {}),'engine':e.get('engine')}
     config=read_json(project/'agent-team/team.json',{}) or {}
     batch=state.get('delivery_batch') or {}
-    mission=str(config.get('delivery_epoch','legacy'))+':'+str(batch.get('id') or state.get('task'))
+    mission=str(config.get('delivery_epoch','legacy'))+':'+str(batch.get('id') or state.get('task') or 'untasked@'+str(state.get('commit') or 'none')[:12])
     now_ts=time.time()
     repairs=sum(v.get('calls',0) for v in (state.get('intervention_calls') or {}).values()
                 if isinstance(v,dict) and now_ts-float(v.get('window_started',0))<3600)

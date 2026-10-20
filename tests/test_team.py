@@ -190,6 +190,25 @@ class TeamTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.reopen('T2')
 
+    def test_exhausted_delivery_parks_the_task_and_moves_on(self):
+        self.write('tasks.md', '- [ ] **T1 Work** | todo | Dependencies: None.\n'
+                   '- [ ] **T2 Next** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Rows')
+        self.controller.initialize(adopt=False)
+        self.controller.config.update(park_exhausted_tasks=True, max_calls_per_delivery=2, auto_batch_size=1)
+        epoch = self.controller.config['delivery_epoch']
+        self.controller.persist(stage='developer', task='T1', delivery_batch={'id': 'T1', 'tasks': ['T1']},
+                                delivery_calls={epoch + ':T1': 2})
+        self.controller.step()
+        self.assertEqual(self.roles, [])
+        self.assertIn('T1', self.controller.state['parked_tasks'])
+        self.assertEqual(self.controller.state['stage'], 'schedule')
+        self.effects['developer'] = lambda: self.write('app.txt', 'T2 change\n')
+        self.controller.step()
+        self.assertEqual(self.controller.state['task'], 'T2')
+        self.controller.reopen('T1')
+        self.assertEqual(self.controller.schedulable(['T1']), ['T1'])
+
     def test_local_commit_records_released_tasks_and_cadence(self):
         snapshot = self.approvals()
         self.controller.persist(delivery_batch={'id': 'T1', 'tasks': ['T1']})

@@ -467,6 +467,7 @@ class Team:
                 'deferred_reports':self.state.get('deferred_reports',[]),
                 'autonomous_discovery':self.state.get('discovery') if role=='planner' and (self.state.get('discovery') or {}).get('active') else None,
                 'released_tasks':self.state.get('released_tasks',[]) if role=='planner' else None,
+                'parked_tasks':self.state.get('parked_tasks',{}) if role=='planner' else None,
                 'recovery':self.state.get('recovery'),
                 'recovery_plan':self.state.get('recovery_plan'),
                 'strategy_failure':self.state.get('strategy_failure'),
@@ -979,10 +980,18 @@ class Team:
         recovery=self.state.get('release_recovery') or {}
         recovering=recovery.get('active') is True
         batch=self.state.get('delivery_batch') or {}
-        mission=('release:'+recovery['incident'] if recovering else str(self.config.get('delivery_epoch','legacy'))+':'+str(batch.get('id') or self.state.get('task')))
+        mission=('release:'+recovery['incident'] if recovering else str(self.config.get('delivery_epoch','legacy'))+':'+str(batch.get('id') or self.state.get('task') or 'untasked@'+str(self.state.get('commit') or 'none')[:12]))
         ledger_name='release_recovery_calls' if recovering else 'delivery_calls'
         ledger=dict(self.state.get(ledger_name,{}))
         limit=self.config.get('max_calls_per_release_recovery',10) if recovering else self.config.get('max_calls_per_delivery',1000)
+        if not intervention and not validation and ledger.get(mission,0)>=limit and not recovering and self.config.get('park_exhausted_tasks'):
+            tasks=[t for t in (batch.get('tasks') or [self.state.get('task')]) if t]
+            if tasks:
+                # Owner-selected autonomy: an exhausted task is parked and delivery moves on instead of stopping.
+                parked={**(self.state.get('parked_tasks') or {}),**{t:{'at':stamp(),'calls':ledger[mission],'reason':self.state.get('reason')} for t in tasks}}
+                self.persist(stage='schedule',parked_tasks=parked,task=None,delivery_batch=None,receipts={},attempts=0,
+                             reason='Delivery budget exhausted for '+', '.join(tasks)+'; parked, continuing with other work')
+                self.event('delivery_budget_parked',tasks=tasks,calls=ledger[mission]);return
         if not intervention and not validation and ledger.get(mission,0)>=limit:
             self.persist(stage='needs_attention',attention_kind='release_recovery_budget' if recovering else 'delivery_budget',reason='Release recovery budget exhausted; inspect the unresolved failure' if recovering else 'Delivery budget exhausted without acceptance; inspect the concrete failed check instead of restarting the agent chain')
             self.event('release_recovery_budget_exhausted' if recovering else 'delivery_budget_exhausted',task=self.state.get('task'),calls=ledger[mission]);return
@@ -1355,12 +1364,14 @@ class Team:
             # Done rows need no memory; `team.py reopen --task ID` re-enables a row for real rework.
             done={r['id'] for r in backlog(self.project)[0] if r['checked']}
             if released&done:self.persist(released_tasks=sorted(released-done));released-=done
-        return [t for t in ready if t not in released]
+        parked=set(self.state.get('parked_tasks') or {})
+        return [t for t in ready if t not in released and t not in parked]
 
     def reopen(self,task):
-        released=set(self.state.get('released_tasks') or [])
-        if task not in released:raise ValueError(task+' is not recorded as released')
-        self.persist(released_tasks=sorted(released-{task}))
+        released=set(self.state.get('released_tasks') or []);parked=dict(self.state.get('parked_tasks') or {})
+        if task not in released and task not in parked:raise ValueError(task+' is not recorded as released or parked')
+        parked.pop(task,None)
+        self.persist(released_tasks=sorted(released-{task}),parked_tasks=parked)
         self.event('released_task_reopened',task=task)
 
     def discovery_due(self):

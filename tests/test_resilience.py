@@ -94,7 +94,7 @@ class ResilienceTests(unittest.TestCase):
             f.adopted();c=f.controller;c.config['max_calls_per_delivery']=1
             c.execute('code_reviewer')
             second=team.Team(f.project,f.home,runner=f.run_role)
-            second.config['max_calls_per_delivery']=1
+            second.config['max_calls_per_delivery']=1;second.config['park_exhausted_tasks']=False
             second.execute('qa')
             self.assertEqual(second.state['attention_kind'],'delivery_budget')
             self.assertEqual(f.roles,['code_reviewer'])
