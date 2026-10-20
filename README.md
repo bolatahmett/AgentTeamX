@@ -479,6 +479,10 @@ the earlier behaviour.
   stays at medium because it is now the only model gate on source changes.
 - `qa_acceptance_tasks` is empty; T64 is already done.
 
+Owner update (2026-10-20): `qa_tiers.mode` was removed to return to tiered QA, and
+`qa_acceptance_tasks` lists T62 and T65-T72 so QA runs their deferred browser acceptance. Those
+rows were reopened from `released_tasks`.
+
 ## Autonomous task discovery - 2026-10-19
 
 Owner-selected: the team runs without waiting for the owner. With `autonomous_discovery.enabled`,
