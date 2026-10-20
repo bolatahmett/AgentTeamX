@@ -480,8 +480,17 @@ the earlier behaviour.
 - `qa_acceptance_tasks` is empty; T64 is already done.
 
 Owner update (2026-10-20): `qa_tiers.mode` was removed to return to tiered QA, and
-`qa_acceptance_tasks` lists T62 and T65-T72 so QA runs their deferred browser acceptance. Those
-rows were reopened from `released_tasks`.
+`qa_acceptance_tasks` lists T62 and T65-T73 so QA runs their deferred browser acceptance. Those
+rows were reopened from `released_tasks`. A passed acceptance run for a listed task closes its
+tasks.md row (done, with the report path) and returns to scheduling; no owner approval is needed.
+
+Controller-owned QA runtime and acceptance sweep (owner, 2026-10-20): the controller starts
+`scripts/qa/runtime.ps1` (migrate, build, serve the current snapshot on loopback 3443) for every
+acceptance QA turn and stops it afterwards; QA never bootstraps its own runtime. In the schedule
+stage every ready acceptance task with a suite runs on one shared runtime; passing rows close,
+the rest go to a QA model turn that writes or repairs the suite (`{url}` is the runtime base URL in
+suite args). An acceptance turn that is not passed parks its row for `park_retry_hours` (or goes
+to repair when it reports findings), so one row never blocks the queue; a QA timeout parks too.
 
 ## Autonomous task discovery - 2026-10-19
 

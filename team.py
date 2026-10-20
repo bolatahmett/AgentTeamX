@@ -192,6 +192,21 @@ def backlog(project):
     return rows,[r['id'] for r in rows if r['status'] in {'todo','in_progress'} and set(r['deps'])<=done]
 
 
+def close_task_row(project, task, note):
+    """Owner-selected (2026-10-20): a passed QA acceptance run closes its task row without owner approval."""
+    path=project/'tasks.md';text=path.read_text(encoding='utf-8-sig')
+    header=re.compile(r'^- \[ \] (\*\*'+re.escape(task)+r'\b.*?\*\*\s*\|\s*)(?:todo|in_progress|blocked)(\s*\|[^\r\n]*)$',re.M)
+    text,count=header.subn(lambda m:'- [x] '+m.group(1)+'done'+m.group(2)+'\n  '+note,text,count=1)
+    if not count:return False
+    tmp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        tmp.write_text(text,encoding='utf-8');os.replace(tmp,path)
+    finally:
+        try:tmp.unlink(missing_ok=True)
+        except OSError:pass
+    return True
+
+
 def task_brief(project, ids, limit=40000, row_cap=14000):
     """Controller-written excerpt of tasks.md for one worker turn.
 
@@ -511,6 +526,7 @@ class Team:
                                   'previous_report':(self.state.get('discovery') or {}).get('last_exploration_report')}
                                  if role=='qa' and self.exploring() else None,
                 'qa_suites_dir':str(self.folder/'artifacts'/'qa'/'suites'),
+                'qa_runtime':{k:v for k,v in (getattr(self,'qa_runtime',None) or {}).items() if k in ('url','snapshot','log')} or None if role=='qa' else None,
                 'tool_inventory_file':str(self.folder/'tool-inventory.json'),
                 'environment_manifest':str(self.folder/'environment/manifest.json'),
                 'baseline_file':str(self.folder/'baseline.json'),'artifacts_dir':str(self.folder/'artifacts'/role),'previous_reports':self.state.get('reports',{}),
@@ -763,6 +779,63 @@ class Team:
                 if close_job:close_job()
         return p.returncode,int(time.monotonic()-started)
 
+    def start_qa_runtime(self,current):
+        """Owner-selected (2026-10-20): the controller, not a QA model turn, builds and serves the current snapshot.
+        Returns a handle for stop_qa_runtime; raises RuntimeError when the runtime cannot become ready."""
+        cfg=self.qa_tiers_config() or {}
+        runtime=cfg.get('runtime') or {}
+        port=int(runtime.get('port',3443));url='http://localhost:'+str(port)
+        hosts=self.qa_hosts(cfg)
+        if 'powershell' not in hosts:raise RuntimeError('QA runtime: no PowerShell host found')
+        script=self.project/str(runtime.get('script','scripts/qa/runtime.ps1'))
+        if not script.is_file():raise RuntimeError('QA runtime script missing: '+str(script))
+        try:
+            urllib.request.urlopen(url+'/__recovery_ready',timeout=3)
+            raise RuntimeError('QA runtime: port '+str(port)+' is already served by another process')
+        except OSError:pass
+        log=self.folder/'artifacts'/'qa'/'runtime'/(stamp().replace(':','-')+'-runtime.log');log.parent.mkdir(parents=True,exist_ok=True)
+        stream=log.open('wb')
+        p=background_popen([hosts['powershell'],'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script),'-ExpectedSnapshot',current['fingerprint']],
+                           cwd=str(self.project),stdin=subprocess.DEVNULL,stdout=stream,stderr=subprocess.STDOUT)
+        try:close_job=attach_worker_job(p)
+        except Exception:
+            terminate_owned(p);stream.close()
+            raise RuntimeError('QA runtime: cannot contain runtime descendants in an owned Windows job')
+        handle={'process':p,'close_job':close_job,'stream':stream,'url':url,'log':str(log.relative_to(self.project)),'snapshot':current['fingerprint']}
+        started=time.monotonic();timeout=int(runtime.get('ready_timeout_seconds',900))
+        self.event('qa_runtime_starting',snapshot=current['fingerprint'],log=handle['log'])
+        try:
+            while True:
+                if self.stop.exists():raise InterruptedError('Owner requested stop')
+                if p.poll() is not None:raise RuntimeError('QA runtime exited before readiness (exit '+str(p.returncode)+'); log '+handle['log']+'\n'+qa_tiers.log_tail(log))
+                if time.monotonic()-started>timeout:raise RuntimeError('QA runtime not ready within '+str(timeout)+'s; log '+handle['log'])
+                try:
+                    with urllib.request.urlopen(url+'/__recovery_ready',timeout=5) as response:
+                        body=json.loads(response.read().decode('utf-8') or '{}')
+                    if body.get('ready') and body.get('snapshot')==current['fingerprint']:break
+                except (OSError,ValueError):pass
+                save(self.folder/'heartbeat.json',{'at':stamp(),'pid':os.getpid(),'role':'qa_runtime','elapsed_seconds':int(time.monotonic()-started),'output_silence_seconds':0})
+                time.sleep(2)
+        except BaseException:
+            self.stop_qa_runtime(handle);raise
+        handle['seconds']=int(time.monotonic()-started)
+        self.event('qa_runtime_ready',seconds=handle['seconds'],url=url)
+        return handle
+
+    def stop_qa_runtime(self,handle):
+        if not handle:return
+        p=handle['process']
+        try:
+            if p.poll() is None:
+                try:urllib.request.urlopen(urllib.request.Request(handle['url']+'/__recovery_stop',method='POST'),timeout=10)
+                except OSError:pass
+                try:p.wait(timeout=60)
+                except subprocess.TimeoutExpired:pass
+        finally:
+            terminate_owned(p)
+            if handle.get('close_job'):handle['close_job']()
+            handle['stream'].close()
+
     def qa_hosts(self,cfg):
         shell=cfg.get('shell') or ['powershell','-NoProfile','-NonInteractive','-Command']
         hosts={'python':sys.executable}
@@ -794,18 +867,14 @@ class Team:
             results.append({'id':'snapshot-stability','exit':1,'seconds':0,'log':'','note':'Source checks changed tracked or untracked files'});ok=False
         return ok,results
 
-    def try_qa_suite(self,cfg,current,task,batch,progress):
-        """Run a QA-authored scenario suite that covers this assignment; returns (report or None, info)."""
+    def run_suite(self,suite,current,cfg):
+        """Run one suite against the controller-owned runtime; returns (outcome, info) and records the result per snapshot."""
         qa_dir=self.folder/'artifacts'/'qa'
-        suites,errors=qa_tiers.load_suites(qa_dir,load)
-        required=[t for t in [task,*(batch.get('tasks') or []),*(batch.get('acceptance_tasks') or [])] if t]
-        suite=qa_tiers.matching_suite(suites,required,(self.state.get('qa_scenario_universe') or {}).get(str(task)))
-        info={'errors':errors}
-        if not suite:
-            info['status']='no suite covers this assignment';return None,info
-        try:command=qa_tiers.suite_command(suite,current['fingerprint'],self.qa_hosts(cfg))
+        url=(getattr(self,'qa_runtime',None) or {}).get('url','')
+        try:command=qa_tiers.suite_command(suite,current['fingerprint'],self.qa_hosts(cfg),url)
         except KeyError:
-            info['status']='no interpreter available for the suite script';return None,info
+            outcome={'ok':False,'passed':[],'failed':[],'missing':list(suite['scenarios']),'problems':['no interpreter available for the suite script']}
+            return outcome,{'status':'no interpreter available for the suite script','suite':suite['id']}
         suite['result_path'].unlink(missing_ok=True)
         log=qa_dir/'fast-path'/(stamp().replace(':','-')+'-suite-'+suite['id']+'.log')
         try:code,seconds=self.run_owned(command,log,suite['timeout_seconds'])
@@ -815,15 +884,74 @@ class Team:
         outcome=qa_tiers.evaluate_suite(suite,result,current['fingerprint'])
         if code:outcome['ok']=False;outcome['problems'].append('suite script exited with '+str(code))
         if snapshot(self.project)['fingerprint']!=current['fingerprint']:outcome['ok']=False;outcome['problems'].append('suite changed tracked or untracked files')
-        info.update(status='ran',suite=suite['id'],exit=code,seconds=seconds,log=str(log.relative_to(self.project)),
-                    passed=outcome['passed'],failed=outcome['failed'],missing=outcome['missing'],problems=outcome['problems'])
+        info={'status':'ran','suite':suite['id'],'exit':code,'seconds':seconds,'log':str(log.relative_to(self.project)),
+              'passed':outcome['passed'],'failed':outcome['failed'],'missing':outcome['missing'],'problems':outcome['problems']}
+        sweeps=dict(self.state.get('suite_sweeps') or {})
+        sweeps[suite['id']]={'snapshot':current['fingerprint'],'ok':outcome['ok'],'at':stamp(),**{k:info[k] for k in ('log','failed','missing','problems')}}
+        self.persist(suite_sweeps=sweeps)
+        return outcome,info
+
+    def acceptance_sweep(self,tasks):
+        """Owner-selected (2026-10-20): run every ready acceptance task's suite on one shared runtime and close passing rows.
+        Returns the tasks that still need a QA model turn (no suite, or a suite that did not pass)."""
+        cfg=self.qa_tiers_config()
+        if not cfg or cfg.get('mode')=='source_only' or not cfg.get('suites',True):return tasks
+        current=snapshot(self.project)
+        suites,_=qa_tiers.load_suites(self.folder/'artifacts'/'qa',load)
+        universe=self.state.get('qa_scenario_universe') or {}
+        sweeps=self.state.get('suite_sweeps') or {}
+        runnable=[]
+        for task in tasks:
+            suite=qa_tiers.matching_suite(suites,[task],universe.get(task))
+            if suite and (sweeps.get(suite['id']) or {}).get('snapshot')!=current['fingerprint']:runnable.append((task,suite))
+        if not runnable:return tasks
+        failures=qa_tiers.preflight(self.project,cfg.get('preflight') or {},shutil.which)
+        if failures:
+            self.event('qa_preflight_blocked',failures=[message for _,message in failures]);return tasks
+        self.event('acceptance_sweep_started',tasks=[t for t,_ in runnable])
+        try:self.qa_runtime=self.start_qa_runtime(current)
+        except RuntimeError as exc:
+            self.event('acceptance_sweep_runtime_failed',reason=str(exc)[:2000]);return tasks
+        passed=[]
+        try:
+            for task,suite in runnable:
+                outcome,info=self.run_suite(suite,current,cfg)
+                if outcome['ok']:passed.append((task,suite['id'],info['log']))
+                else:self.event('acceptance_suite_failed',task=task,suite=suite['id'],failed=info.get('failed'),missing=info.get('missing'),problems=info.get('problems'))
+        finally:
+            self.stop_qa_runtime(self.qa_runtime);self.qa_runtime=None
+        # Rows close only after every suite ran, so each suite saw the same snapshot.
+        closed=[]
+        for task,suite_id,log in passed:
+            if close_task_row(self.project,task,'QA suite '+suite_id+' passed every listed scenario ('+stamp()[:10]+'): '+log+'. Closed by the controller.'):
+                closed.append(task);self.event('acceptance_task_closed',task=task,suite=suite_id,log=log)
+        if closed:self.persist(snapshot=snapshot(self.project)['fingerprint'])
+        self.event('acceptance_sweep_finished',closed=closed)
+        return [t for t in tasks if t not in closed]
+
+    def try_qa_suite(self,cfg,current,task,batch,progress):
+        """Run a QA-authored scenario suite that covers this assignment; returns (report or None, info)."""
+        qa_dir=self.folder/'artifacts'/'qa'
+        suites,errors=qa_tiers.load_suites(qa_dir,load)
+        required=[t for t in [task,*(batch.get('tasks') or []),*(batch.get('acceptance_tasks') or [])] if t]
+        suite=qa_tiers.matching_suite(suites,required,(self.state.get('qa_scenario_universe') or {}).get(str(task)))
+        info={'errors':errors}
+        if not suite:
+            info['status']='no suite covers this assignment';return None,info
+        previous=(self.state.get('suite_sweeps') or {}).get(suite['id'])
+        if previous and previous.get('snapshot')==current['fingerprint'] and not previous.get('ok'):
+            # The acceptance sweep already ran this suite on this snapshot; the model triages its recorded result.
+            info.update(status='already failed on this snapshot',suite=suite['id'],**{k:previous.get(k) for k in ('log','failed','missing','problems')})
+            return None,info
+        outcome,ran=self.run_suite(suite,current,cfg)
+        info.update(ran)
         if not outcome['ok']:return None,info
         if progress and progress.get('remaining'):
             checklist=qa_tiers.progress_from_suite(progress,task,current['fingerprint'],suite,outcome)
             if checklist is None:
                 info['problems'].append('suite does not cover every pending scenario');return None,info
             save(qa_dir/'continuation.json',checklist)
-        return qa_tiers.report_suite(suite,outcome,seconds),info
+        return qa_tiers.report_suite(suite,outcome,ran['seconds']),info
 
     def qa_fast_path(self):
         """Deterministic QA stage. Returns a gate report, or None when a model turn is required."""
@@ -864,7 +992,10 @@ class Team:
                     return qa_tiers.report_source_failures(self.project,failed)
             self.event('qa_fast_path_fallback',stage='source_checks',failed=[r['id'] for r in results if r['exit']])
             return None
-        failures=qa_tiers.preflight(self.project,cfg.get('preflight') or {},shutil.which)
+        preflight=dict(cfg.get('preflight') or {})
+        # The controller-owned runtime already holds the QA port.
+        if getattr(self,'qa_runtime',None):preflight.pop('ports_free',None)
+        failures=qa_tiers.preflight(self.project,preflight,shutil.which)
         if failures:
             self.persist(qa_fast_path={**info,'preflight':[message for _,message in failures]})
             self.event('qa_preflight_blocked',failures=[message for _,message in failures])
@@ -903,8 +1034,45 @@ class Team:
     def run_worker(self,role):
         if role=='qa' and not self.exploring():
             self.__dict__.pop('qa_tier_used',None)
-            report=self.qa_fast_path()
-            if report is not None:return report
+            if not self.acceptance_runtime_needed():
+                report=self.qa_fast_path()
+                return report if report is not None else self.run_worker_engines(role)
+            # Acceptance work: one controller-owned runtime serves both the suite fast path and any model turn.
+            try:self.qa_runtime=self.start_qa_runtime(snapshot(self.project))
+            except RuntimeError as exc:
+                return qa_tiers._report('blocked','The controller could not start the QA runtime for the current snapshot; no model turn was spent.',
+                                        [str(exc)[:4000]],limitations=['Browser acceptance did not run.'],
+                                        next_action='Repair the runtime start failure shown in the evidence, then retry acceptance.')
+            try:
+                report=self.qa_fast_path()
+                return report if report is not None else self.run_worker_engines(role)
+            finally:
+                self.stop_qa_runtime(self.qa_runtime);self.qa_runtime=None
+        return self.run_worker_engines(role)
+
+    def park_acceptance(self,task,reason,report=None,fingerprint=None):
+        # Short first retry that doubles per attempt, capped at park_retry_hours; a reported local
+        # rate-limit wait is honoured when it is longer.
+        counts=dict(self.state.get('acceptance_park_counts') or {});counts[task]=counts.get(task,0)+1
+        delay=min(float(self.config.get('acceptance_park_minutes',30))*60*2**(counts[task]-1),float(self.config.get('park_retry_hours',12))*3600)
+        wait=re.search(r'WAIT_LOCAL_RATE_LIMIT seconds=(\d+)',str(reason))
+        if wait:delay=max(delay,int(wait.group(1))+30)
+        retry_at=time.time()+delay
+        parked={**(self.state.get('parked_tasks') or {}),task:{'at':stamp(),'retry_at':retry_at,'reason':str(reason)[:1000],'report':report}}
+        changes=dict(stage='schedule',parked_tasks=parked,acceptance_park_counts=counts,task=None,delivery_batch=None,receipts={},attempts=0,
+                     reason='Acceptance for '+task+' did not finish; parked, continuing with other work')
+        if fingerprint:changes['snapshot']=fingerprint
+        self.persist(**changes)
+        self.event('acceptance_task_parked',task=task,report=report,retry_at=retry_at)
+
+    def acceptance_runtime_needed(self):
+        cfg=self.qa_tiers_config()
+        if not cfg or cfg.get('mode')=='source_only':return False
+        progress=self.matching_qa_progress()
+        return bool(self.state.get('task') in self.config.get('qa_acceptance_tasks',[]) or
+                    (self.state.get('delivery_batch') or {}).get('acceptance_tasks') or (progress and progress.get('remaining')))
+
+    def run_worker_engines(self,role):
         if not self.engine_failover_enabled():return self.run_worker_engine(role,'codex')
         candidates=self.engine_candidates(role)
         tried=[]
@@ -1116,6 +1284,12 @@ class Team:
         if role=='qa' and self.exploring():
             self.finish_exploration(report,after['fingerprint'],str(path.relative_to(self.project)))
             return
+        if role=='qa' and self.state.get('task') in self.config.get('qa_acceptance_tasks',[]) and report['status']!='passed':
+            # Owner-selected (2026-10-20): unfinished acceptance never loops on one row. A demonstrated
+            # defect goes to repair; anything else parks the row and the queue moves on.
+            if report['findings']:
+                self.request_source_repair(role,report);return
+            self.park_acceptance(self.state['task'],report['next_action'],str(path.relative_to(self.project)),after['fingerprint']);return
         if diagnostic:
             self.persist(release_recovery={**recovery,'phase':'repair'},snapshot=after['fingerprint'])
             if report['status']=='passed':
@@ -1183,8 +1357,12 @@ class Team:
                 return
             if role=='qa':self.record_qa_pass(after)
             if role=='qa' and self.state.get('task') in self.config.get('qa_acceptance_tasks',[]):
-                # Verification-only task: QA results are recorded by the planner; there is no source to publish.
-                self.persist(stage='planner',receipts={},snapshot=after['fingerprint'],reason='QA acceptance passed for '+str(self.state.get('task'))+'; planner records per-ID results')
+                # Verification-only task: a passed acceptance closes the row; there is no source to publish.
+                task=self.state.get('task');relative=str(path.relative_to(self.project))
+                if close_task_row(self.project,task,'QA browser acceptance passed ('+stamp()[:10]+'): '+relative+'. Closed by the controller.'):
+                    self.event('acceptance_task_closed',task=task,report=relative)
+                    after=snapshot(self.project)
+                self.persist(stage='schedule',task=None,receipts={},snapshot=after['fingerprint'],reason='QA acceptance passed for '+str(task)+'; task row closed')
                 return
             receipts={**self.state.get('receipts',{}),role:receipt}
             i=GATES.index(role)
@@ -1819,6 +1997,11 @@ class Team:
             delivered=self.state.get('delivered_release') or {}
             # The planner gets one pass to record a just-delivered open row; afterwards it is never re-dispatched.
             ready=raw if raw and raw[0] in delivered.get('tasks',[]) and not delivered.get('planner_routed') else self.schedulable(raw)
+            accept=[t for t in ready if t in self.config.get('qa_acceptance_tasks',[])]
+            if accept and len(self.acceptance_sweep(accept))<len(accept):
+                raw=backlog(self.project)[1]
+                ready=raw if raw and raw[0] in delivered.get('tasks',[]) and not delivered.get('planner_routed') else self.schedulable(raw)
+            if self.stop.exists():return
             if ready and ready[0] in delivered.get('tasks',[]) and not delivered.get('planner_routed'):
                 # Released work still open in tasks.md: the planner records the delivered outcome once,
                 # instead of a developer re-run against the batch's already spent delivery budget.
@@ -1843,6 +2026,12 @@ class Team:
                 self.persist(stage='developer',task=ready[0],delivery_batch=batch,attempts=0,
                              delivered_release=None if ready[0] not in delivered.get('tasks',[]) else delivered)
                 stage='developer'
+            elif git(self.project,'status','--porcelain'):
+                # Owner-selected (2026-10-20): closed acceptance rows and other local changes are delivered
+                # through the normal gates instead of waiting uncommitted while the queue is empty.
+                self.persist(stage='code_reviewer',task=None,delivery_batch=None,receipts={},attempts=0,
+                             reason='No ready work; delivering pending local changes through the review gates')
+                stage='code_reviewer'
             elif self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
                 self.persist(stage='ux_reviewer');stage='ux_reviewer'
             elif self.discovery_due():
@@ -1930,6 +2119,11 @@ class Team:
                 except Exception as exc:
                     role=self.state.get('active_role') or self.state.get('stage')
                     kind=failure_kind(exc)
+                    if role=='qa' and kind=='timeout' and self.state.get('task') in self.config.get('qa_acceptance_tasks',[]) and not self.exploring():
+                        self.event('attention',reason=str(exc),failure_kind=kind,attempt=1)
+                        self.park_acceptance(self.state['task'],'QA turn timed out: '+str(exc))
+                        if once:break
+                        continue
                     failures=dict(self.state.get('failure_counts',{}));key=kind+':'+str(role)+':'+str(self.state.get('snapshot'))
                     failures[key]=failures.get(key,0)+1
                     self.persist(stage='waiting_for_quota' if kind=='quota' else 'needs_attention',resume_role=role,attention_kind='worker_failure',failure_kind=kind,failure_counts=failures,reason=str(exc))

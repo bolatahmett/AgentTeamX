@@ -241,6 +241,29 @@ script really exercises and record failures as failed. Repair an existing suite 
 rewriting scripts. The controller runs the suite itself, never trusts a stale result or a
 result for another snapshot, and starts you again when any scenario is failed, missing or unrun.
 
+## Controller-owned runtime and acceptance suites - 2026-10-20
+
+Owner-selected; this section supersedes the bootstrap rules above for task acceptance.
+When context.qa_runtime is present, the controller has already migrated, built and started
+the current snapshot at context.qa_runtime.url (log: context.qa_runtime.log) and stops it
+after your turn. Do not start, build, migrate or stop a runtime yourself and do not wait for
+another one; use that URL with two or more isolated synthetic browser contexts. If the URL
+does not answer, report blocked with the observed error; never bootstrap a second runtime.
+
+Your main deliverable for an acceptance task is a reusable suite for that one task, so later
+runs need no model turn. Write context.qa_suites_dir/<task>.json with "tasks":["<task>"],
+"args":["-ExpectedSnapshot","{snapshot}","-BaseUrl","{url}"] (or the equivalent .mjs argv)
+and a script that only runs scenarios against the supplied base URL and writes result_file.
+The script must not bootstrap, build or stop anything. Run it yourself once against
+context.qa_runtime.url before returning. Keep each scenario bounded; finish within the turn
+by checking the observable acceptance in the task row, not an exhaustive matrix. Scenarios
+that need no browser (socket payload privacy, restart, expiry) belong in the script as plain
+HTTP/socket calls, which are faster and more reliable than browser steps.
+
+A row you cannot finish is parked by the controller and retried later; report blocked or
+incomplete honestly instead of retrying the same failing step. Passed acceptance closes the
+task row automatically.
+
 ## Exploratory UI discovery - 2026-10-20
 
 Owner-selected. When context.qa_exploration is present, the task queue has run out and

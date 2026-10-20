@@ -4,6 +4,7 @@ All workers and commands are mocked; nothing here starts a model, a browser or a
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 import subprocess
@@ -215,9 +216,12 @@ class ControllerFastPathTests(unittest.TestCase):
         for target in (patch.object(team, 'competing_processes', return_value=[]),
                        patch.object(team.Team, 'run_worker_engine', side_effect=self.engine),
                        patch.object(team.Team, 'run_owned', side_effect=self.fake_owned),
-                       patch.object(team.Team, 'qa_hosts', return_value={'powershell': 'pwsh', 'python': sys.executable})):
+                       patch.object(team.Team, 'qa_hosts', return_value={'powershell': 'pwsh', 'python': sys.executable}),
+                       patch.object(team.Team, 'start_qa_runtime', side_effect=self.fake_runtime),
+                       patch.object(team.Team, 'stop_qa_runtime', side_effect=lambda handle: self.runtimes.append('stop'))):
             target.start()
             self.addCleanup(target.stop)
+        self.runtimes = []
 
     def write(self, name, text):
         path = self.project / name
@@ -229,7 +233,12 @@ class ControllerFastPathTests(unittest.TestCase):
 
     def engine(self, role, engine='codex'):
         self.roles.append(role)
-        return report('completed' if role in {'planner', 'developer'} else 'passed')
+        status = getattr(self, 'engine_status', {}).get(role)
+        return report(status or ('completed' if role in {'planner', 'developer'} else 'passed'))
+
+    def fake_runtime(self, current):
+        self.runtimes.append('start')
+        return {'url': 'http://localhost:3443', 'snapshot': current['fingerprint'], 'log': 'runtime.log'}
 
     def fake_owned(self, args, log, timeout, cwd=None):
         self.owned.append(list(args))
@@ -406,6 +415,79 @@ class ControllerFastPathTests(unittest.TestCase):
                 {'id': s, 'status': status, 'evidence': ['observed ' + s]} for s in scenarios]}), encoding='utf-8')
         self.suite_writer = writer
         return qa, writer
+
+    def acceptance_rows(self):
+        self.write('tasks.md', '- [ ] **T1 - Verify one** | in_progress | Dependencies: None.\n'
+                               '- [ ] **T2 - Verify two** | in_progress | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Acceptance rows')
+        self.controller.config['qa_acceptance_tasks'] = ['T1', 'T2']
+        self.controller.initialize()
+
+    def test_acceptance_sweep_runs_suites_on_one_runtime_and_closes_passing_rows(self):
+        self.acceptance_rows()
+        self.write_suite()
+        self.controller.step()
+        # One runtime for the sweep, one for the model turn on the row without a suite.
+        self.assertEqual(self.runtimes, ['start', 'stop', 'start', 'stop'])
+        text = (self.project / 'tasks.md').read_text(encoding='utf-8')
+        self.assertIn('- [x] **T1 - Verify one** | done | Dependencies: None.\n  QA suite S1 passed', text)
+        self.assertIn('- [x] **T2 - Verify two** | done | Dependencies: None.\n  QA browser acceptance passed', text)
+        self.assertEqual(self.controller.state['snapshot'], self.fingerprint())
+        self.assertEqual(self.roles, ['qa'])
+
+    def test_failed_sweep_suite_is_not_rerun_by_the_fast_path_on_the_same_snapshot(self):
+        self.acceptance_rows()
+        qa, writer = self.write_suite()
+        self.suite_writer = lambda args: writer(args, 'failed')
+        self.controller.step()
+        self.assertEqual(len([a for a in self.owned if '-File' in a]), 1)
+        self.assertEqual(self.controller.state['qa_fast_path']['suite']['status'], 'already failed on this snapshot')
+        self.assertEqual(self.roles, ['qa'])
+        self.assertIn('- [x] **T1 - Verify one** | done', (self.project / 'tasks.md').read_text(encoding='utf-8'))
+
+    def test_unfinished_acceptance_parks_the_row_and_moves_on(self):
+        self.acceptance_rows()
+        self.engine_status = {'qa': 'blocked'}
+        self.controller.step()
+        self.assertEqual(self.roles, ['qa'])
+        self.assertIn('T1', self.controller.state['parked_tasks'])
+        self.assertEqual(self.controller.state['stage'], 'schedule')
+        self.engine_status = {}
+        self.controller.step()
+        self.assertEqual(self.roles, ['qa', 'qa'])
+        text = (self.project / 'tasks.md').read_text(encoding='utf-8')
+        self.assertIn('- [ ] **T1 - Verify one** | in_progress', text)
+        self.assertIn('- [x] **T2 - Verify two** | done', text)
+
+    def test_acceptance_parking_starts_short_and_doubles(self):
+        self.acceptance_rows()
+        self.controller.config['acceptance_park_minutes'] = 30
+        before = time.time()
+        self.controller.park_acceptance('T1', 'not finished')
+        first = self.controller.state['parked_tasks']['T1']['retry_at'] - before
+        self.controller.park_acceptance('T1', 'not finished')
+        second = self.controller.state['parked_tasks']['T1']['retry_at'] - before
+        self.assertAlmostEqual(first, 1800, delta=5)
+        self.assertAlmostEqual(second, 3600, delta=5)
+        self.controller.park_acceptance('T2', 'WAIT_LOCAL_RATE_LIMIT seconds=4000; resume later')
+        self.assertGreaterEqual(self.controller.state['parked_tasks']['T2']['retry_at'] - before, 4030)
+
+    def test_closed_rows_are_delivered_when_the_queue_is_empty(self):
+        self.acceptance_rows()
+        self.controller.step()
+        self.controller.step()
+        # Both rows closed in tasks.md; the empty queue sends the pending change through the gates.
+        self.assertTrue(self.git('status', '--porcelain'))
+        self.controller.step()
+        self.assertIn(self.controller.state['stage'], {'qa', 'devops', 'ready_for_commit'})
+        self.assertIn('code_reviewer', self.roles)
+
+    def test_runtime_start_failure_parks_without_a_model_turn(self):
+        self.acceptance_rows()
+        with patch.object(team.Team, 'start_qa_runtime', side_effect=RuntimeError('web build failed')):
+            self.controller.step()
+        self.assertEqual(self.roles, [])
+        self.assertIn('T1', self.controller.state['parked_tasks'])
 
     def test_suite_covering_the_assignment_replaces_the_agent_turn(self):
         self.run_chain()

@@ -213,10 +213,11 @@ def matching_suite(suites, required_tasks, universe=None):
     return None
 
 
-def suite_command(suite, snapshot_value, hosts):
-    """argv for a suite script; arguments are plain tokens, never a shell string."""
+def suite_command(suite, snapshot_value, hosts, url=''):
+    """argv for a suite script; arguments are plain tokens, never a shell string.
+    {url} is the controller-owned runtime base URL (empty when no runtime was started)."""
     kind = INTERPRETERS[suite['script'].suffix.lower()]
-    args = [a.replace('{snapshot}', snapshot_value) for a in suite['args']]
+    args = [a.replace('{snapshot}', snapshot_value).replace('{url}', url) for a in suite['args']]
     if kind == 'powershell':
         return [hosts['powershell'], '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(suite['script']), *args]
     if kind == 'node':

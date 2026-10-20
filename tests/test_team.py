@@ -308,19 +308,29 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.controller.state['task'], 'T2')
         self.assertIsNone(self.controller.state['delivered_release'])
 
-    def test_verification_only_task_goes_to_qa_then_planner(self):
-        self.write('tasks.md', '- [ ] **T1 Verify journey** | todo | Dependencies: None.\n')
-        self.git('add', '.'); self.git('commit', '-qm', 'Verification row')
-        self.controller.config['qa_acceptance_tasks'] = ['T1']
+    def test_passed_verification_task_closes_its_row_and_schedules_next(self):
+        self.write('tasks.md', '- [ ] **T1 - Verify journey** | in_progress | Dependencies: None.\n  Open: browser check.\n'
+                               '- [ ] **T2 - Verify other** | in_progress | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Verification rows')
+        self.controller.config['qa_acceptance_tasks'] = ['T1', 'T2']
         self.controller.initialize()
-        self.effects['planner'] = lambda: self.write('tasks.md', '- [x] **T1 Verify journey** | done | Dependencies: None.\n')
         self.controller.step()
         self.assertEqual(self.roles, ['qa'])
-        self.assertEqual(self.controller.state['stage'], 'planner')
         self.assertEqual(self.controller.context('qa')['delivery_batch']['tasks'], ['T1'])
+        text = (self.project / 'tasks.md').read_text(encoding='utf-8')
+        self.assertIn('- [x] **T1 - Verify journey** | done | Dependencies: None.\n  QA browser acceptance passed', text)
+        self.assertIn('- [ ] **T2 - Verify other** | in_progress', text)
+        self.assertEqual(self.controller.state['stage'], 'schedule')
         self.controller.step()
-        self.assertEqual(self.roles, ['qa', 'planner'])
+        self.assertEqual(self.roles, ['qa', 'qa'])
+        self.assertEqual(self.controller.state['task'], None)
+        self.assertNotIn('planner', self.roles)
         self.assertNotIn('developer', self.roles)
+
+    def test_close_task_row_ignores_done_and_unknown_rows(self):
+        self.write('tasks.md', '- [x] **T1 - Done** | done | Dependencies: None.\n')
+        self.assertFalse(team.close_task_row(self.project, 'T1', 'note'))
+        self.assertFalse(team.close_task_row(self.project, 'T9', 'note'))
 
     def test_planner_routing_after_release_happens_only_once(self):
         self.released_open_task()
