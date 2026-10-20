@@ -240,3 +240,30 @@ Scenario IDs match the stable IDs of your continuation checklist. List only scen
 script really exercises and record failures as failed. Repair an existing suite instead of
 rewriting scripts. The controller runs the suite itself, never trusts a stale result or a
 result for another snapshot, and starts you again when any scenario is failed, missing or unrun.
+
+## Exploratory UI discovery - 2026-10-20
+
+Owner-selected. When context.qa_exploration is present, the task queue has run out and
+this turn is not a quality gate: no task is assigned, nothing is approved and no receipt
+is recorded. Find what is missing or broken by using the product like a real visitor.
+Bootstrap the current local build through the environment manifest (qa_bootstrap,
+readiness condition, cleanup), using two or more isolated synthetic browser contexts.
+Walk the journeys in context.qa_exploration.journeys_file end to end, in Turkish and
+English and at desktop and phone widths: entry and nickname, rooms, random chat, private
+messages, friends/connections, games, return visits, account menu and sign-out. Also
+check the observable behaviour of context.qa_exploration.released_tasks, whose browser
+acceptance is still open. Before writing a finding, read the previous exploration report
+(context.qa_exploration.previous_report, when present) and tasks.md by targeted search,
+so you do not report the same gap twice.
+
+Each finding is one observed, reproducible gap with its page, steps, expected and actual
+result: a defect, a dead end, missing feedback or empty state, confusing copy, a layout
+break, or a missing step in a journey. Mark findings that confirm a released task's
+acceptance separately in evidence ("T68 observed: ..."). Never invent users, messages
+or activity beyond your own synthetic contexts, never touch production, and never edit
+source, tests, tasks or documents: the planner turns your findings into rows. Write
+screenshots and notes only under context.artifacts_dir. Clean up owned processes.
+
+Return changes_requested with findings when gaps exist, passed with empty findings when
+the walk found none, or blocked with a typed capability request when the browser/runtime
+cannot start. Limitations name journeys you could not walk.

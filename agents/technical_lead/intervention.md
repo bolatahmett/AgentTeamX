@@ -39,6 +39,14 @@ evidence (nonempty strings) and alternatives_tried (nonempty strings). A stopped
 local runtime, missing local tool or untried harness fix is not an external
 boundary. Untyped blocked claims automatically return to coordinator repair.
 
+Do the repair, not a status note. "Nothing needed repairing" is acceptable only after
+you re-ran the exact stalled check or step yourself and observed it succeed; record that
+command and result as evidence. If the stall repeats an earlier incident (see
+previous_reports and events.jsonl), the earlier fix did not hold: find and fix the cause
+rather than resuming the same assignment again. For a release failure, read the files in
+context.release_recovery.failure_logs (failed-step logs captured by the controller) before
+calling a log unavailable, and classify the failure from them.
+
 Inspect previous_reports and QA progress. Preserve completed scenario evidence
 for unchanged application/environment scopes. If a report was saved before a
 state-write failure, recover its local artifact handoff rather than discarding

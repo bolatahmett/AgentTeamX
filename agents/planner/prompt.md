@@ -92,6 +92,12 @@ features that make conversations richer. Reuse delivered code; never add rows th
 need owner approval, credentials, production writes, legal/market decisions, real
 people or invented usage data, and never duplicate an existing or done row. Report
 completed when rows were added; report clear when nothing is justified.
+When autonomous_discovery.exploration_report is set, QA has just walked the local UI.
+Read that report first: each finding is observed evidence. Turn the most valuable
+findings into bounded ready rows (group closely related ones) and do not re-add
+findings already covered by an existing row. Evidence lines that confirm a released
+task's observable behaviour may be recorded on that row, but QA exploration alone
+never closes browser/device/owner acceptance gates.
 context.released_tasks lists rows whose source was already committed through the review
 gates; the controller never schedules them for the developer again. They are not queued
 work: an open released row does not mean the queue is full, so look past them for new work.

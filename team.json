@@ -99,7 +99,7 @@
   "release_diagnostic_model": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "qa_acceptance_tasks": [],
   "auto_batch_size": 3,
-  "autonomous_discovery": {"enabled": true, "interval_minutes": 60, "max_interval_hours": 24},
+  "autonomous_discovery": {"enabled": true, "qa_exploration": true, "interval_minutes": 60, "max_interval_hours": 24},
   "delivery_batches": [
     {
       "id": "presence-return-20261018",

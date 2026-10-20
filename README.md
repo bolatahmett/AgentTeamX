@@ -515,3 +515,21 @@ the planner (context.parked_tasks, which may split them into smaller rows) and r
 `python agent-team/team.py reopen --task ID`. Release recovery keeps its own budget and still escalates.
 Safety nets were raised: 100 calls per controller start, 10 repair calls per incident and 30 per hour.
 A repair window that is full is a timed wait that resumes automatically, not a stop.
+
+## QA exploration and release log capture - 2026-10-20
+
+Owner-selected. With `autonomous_discovery.qa_exploration`, a discovery pass with no ready rows
+first schedules QA with context.qa_exploration instead of going straight to the planner. QA boots
+the local build from the environment manifest, walks docs/product/journeys.md and the observable
+behaviour of released rows in isolated synthetic browser contexts, and reports observed gaps as
+findings. The pass is not a gate: no fast path, receipt or last_qa_pass is recorded. Its report
+path reaches the planner as autonomous_discovery.exploration_report and the planner turns findings
+into rows. A typed capability request goes through normal environment recovery and resumes the
+exploration. The usual discovery backoff applies when neither step produces ready work.
+Events: qa_exploration_finished.
+
+When a release recovery starts, the controller saves the failed-step log of every failed workflow
+for the exact commit (`gh run view <id> --log-failed`, its existing read-only gh login) under
+artifacts/release-logs/ and lists the files in release_recovery.failure_logs, so DevOps and the
+coordinator can diagnose without their own GitHub access. Token-like strings and private keys are
+redacted. Event: release_logs_captured.

@@ -47,6 +47,14 @@ CLAUDE_DENIED = ('Bash(git push *)','Bash(git commit *)','Bash(git reset *)','Ba
                  'Bash(Invoke-RestMethod *)','Bash(irm *)','Bash(*--output*)','Bash(*--ext-diff*)','Bash(*--textconv*)')
 
 
+def failed_run_log(run):
+    """Read-only failed-step log of one GitHub Actions run, using the existing gh login."""
+    result=background_run(['gh','run','view',str(run),'--repo','bolatahmett/AfterDark','--log-failed'],
+                          capture_output=True,timeout=90,encoding='utf-8',errors='replace')
+    if result.returncode==0:return result.stdout
+    return 'gh exit '+str(result.returncode)+'\n'+(result.stderr or '')[-4000:]
+
+
 def error_text(event):
     """Only an event's error/message fields, so paths or model output elsewhere cannot look like quota."""
     parts=[]
@@ -477,7 +485,11 @@ class Team:
                 'recovery_plan_file':str(self.folder/'recovery-plan.json'),
                 'shared_context_file':str(self.home/'shared-context.md'),
                 'task_brief_file':str(self.folder/'artifacts'/role/'task-brief.md'),
-                'qa_fast_path':self.state.get('qa_fast_path') if role=='qa' else None,
+                'qa_fast_path':self.state.get('qa_fast_path') if role=='qa' and not self.exploring() else None,
+                'qa_exploration':{'journeys_file':str(self.project/'docs'/'product'/'journeys.md'),
+                                  'released_tasks':self.state.get('released_tasks',[]),
+                                  'previous_report':(self.state.get('discovery') or {}).get('last_exploration_report')}
+                                 if role=='qa' and self.exploring() else None,
                 'qa_suites_dir':str(self.folder/'artifacts'/'qa'/'suites'),
                 'tool_inventory_file':str(self.folder/'tool-inventory.json'),
                 'environment_manifest':str(self.folder/'environment/manifest.json'),
@@ -850,7 +862,7 @@ class Team:
         return not (self.__dict__.get('qa_tier_used') is not None and not progress.get('remaining'))
 
     def run_worker(self,role):
-        if role=='qa':
+        if role=='qa' and not self.exploring():
             self.__dict__.pop('qa_tier_used',None)
             report=self.qa_fast_path()
             if report is not None:return report
@@ -1052,6 +1064,9 @@ class Team:
         self.persist(last_completed_scope=after['scopes'])
         if intervention:
             self.finish_intervention(report,before,after,str(path.relative_to(self.project)))
+            return
+        if role=='qa' and self.exploring():
+            self.finish_exploration(report,after['fingerprint'],str(path.relative_to(self.project)))
             return
         if diagnostic:
             self.persist(release_recovery={**recovery,'phase':'repair'},snapshot=after['fingerprint'])
@@ -1380,11 +1395,36 @@ class Team:
         if not cfg.get('enabled') or self.inputs():return False
         return time.time()>=(self.state.get('discovery') or {}).get('next_at',0)
 
+    def exploring(self):
+        """True while a discovery pass is in its QA exploratory UI walk."""
+        discovery=self.state.get('discovery') or {}
+        return bool(discovery.get('active') and discovery.get('phase')=='exploration')
+
     def start_discovery(self):
-        discovery={**(self.state.get('discovery') or {}),'active':True,'started_at':stamp()}
-        self.persist(stage='planner',discovery=discovery,task=None,delivery_batch=None,
-                     reason='No ready work; autonomous discovery asks the planner to add justified tasks')
-        self.event('autonomous_discovery_started',empty_passes=discovery.get('empty_passes',0))
+        cfg=self.config.get('autonomous_discovery') or {}
+        discovery={**(self.state.get('discovery') or {}),'active':True,'started_at':stamp(),'exploration_report':None}
+        if cfg.get('qa_exploration'):
+            # Owner-selected (2026-10-20): when tasks run out, QA walks the local UI and reports gaps first;
+            # the planner then turns observed findings into rows. Exploration is never a quality gate.
+            current=snapshot(self.project)
+            self.persist(stage='qa',discovery={**discovery,'phase':'exploration'},task=None,delivery_batch=None,
+                         snapshot=current['fingerprint'],receipts={},
+                         reason='No ready work; QA explores the local UI for gaps before planning')
+        else:
+            self.persist(stage='planner',discovery={**discovery,'phase':'planning'},task=None,delivery_batch=None,
+                         reason='No ready work; autonomous discovery asks the planner to add justified tasks')
+        self.event('autonomous_discovery_started',empty_passes=discovery.get('empty_passes',0),phase=self.state['discovery']['phase'])
+
+    def finish_exploration(self,report,fingerprint,report_path):
+        """Hand QA exploration evidence to the planner; never records a QA pass or gate receipt."""
+        if report['capability_requests']:
+            self.request_recovery(report['capability_requests'][0],'qa',fingerprint,report_path)
+            return
+        discovery={**(self.state.get('discovery') or {}),'phase':'planning','exploration_report':report_path,
+                   'exploration_findings':len(report['findings'])}
+        self.persist(stage='planner',discovery=discovery,snapshot=fingerprint,
+                     reason='QA exploration recorded '+str(len(report['findings']))+' finding(s); planner turns them into rows')
+        self.event('qa_exploration_finished',status=report['status'],findings=len(report['findings']),report=report_path)
 
     def finish_discovery(self):
         # Back off when passes add nothing ready, so an exhausted backlog cannot burn paid planner turns.
@@ -1393,7 +1433,9 @@ class Team:
         empty=0 if ready else (self.state.get('discovery') or {}).get('empty_passes',0)+1
         base=int(cfg.get('interval_minutes',60))*60
         delay=min(base*(2**min(empty,6)),int(cfg.get('max_interval_hours',24))*3600) if empty else base
-        self.persist(discovery={'active':False,'empty_passes':empty,'next_at':time.time()+delay,'finished_at':stamp(),'ready':ready[:5]})
+        previous=self.state.get('discovery') or {}
+        self.persist(discovery={'active':False,'empty_passes':empty,'next_at':time.time()+delay,'finished_at':stamp(),'ready':ready[:5],
+                                'last_exploration_report':previous.get('exploration_report') or previous.get('last_exploration_report')})
         self.event('autonomous_discovery_finished',ready=ready[:5],empty_passes=empty,next_in_seconds=delay)
 
     def complete_release(self,local=False):
@@ -1417,8 +1459,31 @@ class Team:
         # Preserve the original incident across new candidate SHAs and restarts.
         recovery={**recovery,'phase':'diagnosis'}
         current=snapshot(self.project)
+        logs=self.capture_release_logs(commit)
+        if logs:recovery={**recovery,'failure_logs':logs}
         self.persist(snapshot=current['fingerprint'],receipts=retained_gates(self.state.get('receipts',{}),current),release_recovery=recovery,stage='devops',resume_role='devops',attention_kind='release_failure',reason=reason)
-        self.event('release_recovery_scheduled',incident=recovery['incident'],candidate=commit)
+        self.event('release_recovery_scheduled',incident=recovery['incident'],candidate=commit,failure_logs=logs)
+
+    def capture_release_logs(self,commit):
+        """Save failed GitHub Actions job logs for the exact release so diagnosis roles need no gh access.
+        Runs with the controller's existing gh login; read-only `gh run view --log-failed` only."""
+        observation=load(self.folder/'release-observation.json',{}) or {}
+        if observation.get('commit')!=commit:return []
+        folder=self.folder/'artifacts'/'release-logs';saved=[]
+        for row in observation.get('workflows') or []:
+            if row.get('conclusion') in {None,'success','skipped'}:continue
+            match=re.search(r'/actions/runs/([0-9]+)',str(row.get('url','')))
+            if not match:continue
+            run=match[1]
+            try:text=failed_run_log(run)
+            except Exception as exc:text='Log capture failed: '+type(exc).__name__
+            # GitHub masks secrets in logs; keep the tail, where the failing step is.
+            text=re.sub(r'(?i)(gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----)','[REDACTED]',text)[-200000:]
+            folder.mkdir(parents=True,exist_ok=True)
+            path=folder/(commit[:12]+'-'+run+'.log');path.write_text(text,encoding='utf-8')
+            saved.append(str(path))
+        if saved:self.event('release_logs_captured',commit=commit,files=saved)
+        return saved
 
     def request_recovery(self,capability,role,fingerprint,report_path):
         if role=='qa' and self.config.get('qa_owns_environment'):
@@ -1571,7 +1636,7 @@ class Team:
         if stage=='idle' and self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
             self.persist(stage='ux_reviewer');stage='ux_reviewer'
         if stage=='idle' and self.discovery_due():
-            self.start_discovery();stage='planner'
+            self.start_discovery();stage=self.state['stage']
         if stage in TERMINAL:return
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
         if stage=='schedule':
@@ -1606,9 +1671,9 @@ class Team:
             elif self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
                 self.persist(stage='ux_reviewer');stage='ux_reviewer'
             elif self.discovery_due():
-                self.start_discovery();stage='planner'
+                self.start_discovery();stage=self.state['stage']
             else:self.persist(stage='idle',reason='No ready work; waiting for evidence, new owner input or the next discovery pass');return
-        if stage in GATES and gate_valid(self.state.get('receipts',{}).get(stage),stage,current):
+        if stage in GATES and not (stage=='qa' and self.exploring()) and gate_valid(self.state.get('receipts',{}).get(stage),stage,current):
             index=GATES.index(stage)
             self.persist(stage=GATES[index+1] if index+1<len(GATES) else 'ready_for_commit',reason='Reused unchanged scoped '+stage+' evidence')
             return

@@ -153,6 +153,35 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(discovery['empty_passes'], 0)
         self.assertEqual(discovery['ready'], ['T2'])
 
+    def test_discovery_runs_qa_exploration_then_planner_turns_findings_into_rows(self):
+        self.discovery_setup()
+        self.controller.config['autonomous_discovery']['qa_exploration'] = True
+        seen = {}
+        def explore():
+            seen['qa'] = self.controller.context('qa')
+        def add_row():
+            seen['planner'] = self.controller.context('planner')['autonomous_discovery']
+            self.write('tasks.md', '- [x] **T1 Work** | done | Dependencies: None.\n'
+                       '- [ ] **T2 Observed gap** | todo | Dependencies: T1.\n')
+        self.effects['qa'] = explore
+        self.effects['planner'] = add_row
+        self.responses['qa'] = report('changes_requested', findings=['Room list has no empty state'])
+        self.controller.step()
+        self.assertEqual(self.roles, ['qa'])
+        self.assertIsNotNone(seen['qa']['qa_exploration'])
+        self.assertIsNone(seen['qa']['qa_fast_path'])
+        self.assertEqual(self.controller.state['stage'], 'planner')
+        self.assertNotIn('qa', self.controller.state.get('receipts', {}))
+        self.assertIsNone(self.controller.state.get('last_qa_pass'))
+        self.controller.step()
+        self.assertEqual(self.roles, ['qa', 'planner'])
+        self.assertTrue(seen['planner']['exploration_report'])
+        self.assertEqual(seen['planner']['exploration_findings'], 1)
+        discovery = self.controller.state['discovery']
+        self.assertFalse(discovery['active'])
+        self.assertEqual(discovery['ready'], ['T2'])
+        self.assertTrue(discovery['last_exploration_report'])
+
     def test_empty_discovery_backs_off_without_attention(self):
         self.discovery_setup()
         self.responses['planner'] = report('blocked')

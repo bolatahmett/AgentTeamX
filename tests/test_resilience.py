@@ -100,6 +100,31 @@ class ResilienceTests(unittest.TestCase):
             self.assertEqual(f.roles,['code_reviewer'])
         finally:f.doCleanups()
 
+    def test_release_recovery_saves_failed_job_logs_for_diagnosis(self):
+        from test_team import TeamTests
+        f=TeamTests();f.setUp()
+        try:
+            f.adopted();c=f.controller
+            c.persist(published_commit='a'*40)
+            team.save(c.folder/'release-observation.json',{'commit':'a'*40,'ci':'failed','workflows':[
+                {'workflowName':'Local application checks','conclusion':'success','url':'https://github.com/x/y/actions/runs/1'},
+                {'workflowName':'Oracle deployment','conclusion':'failure','url':'https://github.com/x/y/actions/runs/42'}]})
+            log='deploy\tmigrate\tERROR relation missing ghp_'+'x'*30+'\n'
+            with patch.object(team,'failed_run_log',return_value=log) as run:
+                c.begin_release_recovery('a'*40,'Deployment failed')
+            run.assert_called_once_with('42')
+            done=SimpleNamespace(returncode=0,stdout='ok',stderr='')
+            with patch.object(team,'background_run',return_value=done) as gh:
+                self.assertEqual(team.failed_run_log('42'),'ok')
+            self.assertEqual(gh.call_args[0][0][:4],['gh','run','view','42'])
+            self.assertIn('--log-failed',gh.call_args[0][0])
+            logs=c.state['release_recovery']['failure_logs']
+            self.assertEqual(len(logs),1)
+            text=Path(logs[0]).read_text(encoding='utf-8')
+            self.assertIn('relation missing',text);self.assertNotIn('ghp_',text)
+            self.assertEqual(c.state['stage'],'devops')
+        finally:f.doCleanups()
+
     def test_release_recovery_uses_separate_budget_without_resetting_delivery(self):
         from test_team import TeamTests
         f=TeamTests();f.setUp()
