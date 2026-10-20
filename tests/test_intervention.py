@@ -69,6 +69,14 @@ class InterventionTests(unittest.TestCase):
     run_role=test_team.TeamTests.run_role
     adopted=test_team.TeamTests.adopted
 
+    def test_protected_only_findings_skip_developer(self):
+        self.adopted();c=self.controller
+        c.request_source_repair('code_reviewer',{'findings':['agent-team/team.py: gate bypass'],'next_action':'fix'})
+        self.assertEqual(c.state['stage'],'needs_attention')
+        self.assertEqual(c.state['attention_kind'],'worker_failure')
+        c.request_source_repair('code_reviewer',{'findings':['agent-team/team.py: x','apps/web/page.tsx: y'],'next_action':'fix'})
+        self.assertEqual(c.state['stage'],'developer')
+
     @unittest.skipUnless(os.name=='nt','Windows sharing contract')
     def test_qa_report_and_progress_survive_real_post_report_state_lock(self):
         self.adopted();c=self.controller;c.step()

@@ -125,6 +125,9 @@ def machinery_fingerprint(home=None):
     except OSError:return None  # mid-write or locked; compare again on the next loop
 
 
+PROTECTED_PATHS=('agent-team/','codex-supervisor-windows/','scripts/start-product-team.ps1','scripts/stop-product-team.ps1','scripts/status-product-team.ps1','Team.cmd','AGENTS.md','CLAUDE.md','agent.md')
+
+
 def snapshot(project):
     # Include tracked deletions and untracked source; never read ignored secrets/cache.
     paths = sorted(set(git(project,'ls-files','--cached','--others','--exclude-standard','-z').decode('utf-8').split('\0'))-{''})
@@ -1096,7 +1099,7 @@ class Team:
             return
         if not intervention and role in READ_ONLY | {'qa','environment_engineer','technical_lead'} and changed:raise RuntimeError(role+' changed source; gate rejected: '+', '.join(changed[:10]))
         if role=='planner' and any(p!='tasks.md' for p in changed):raise RuntimeError('Planner changed files outside tasks.md')
-        protected=('agent-team/','codex-supervisor-windows/','scripts/start-product-team.ps1','scripts/stop-product-team.ps1','scripts/status-product-team.ps1','Team.cmd','AGENTS.md','CLAUDE.md','agent.md')
+        protected=PROTECTED_PATHS
         if role=='developer' and any(any(p==x or (x.endswith('/') and p.startswith(x)) for x in protected) for p in changed):raise RuntimeError('Developer changed protected team policy/controller files; owner review required')
         if role=='developer' and not changed and report['status'] in {'completed','passed'}:raise RuntimeError('Developer reported completion without source or task progress')
         if role in {'planner','developer'}:backlog(self.project)
@@ -1202,6 +1205,12 @@ class Team:
         elif role=='operations':self.persist(stage='planner' if report['findings'] else 'schedule',pending_operations=False)
 
     def request_source_repair(self,role,report):
+        findings=report['findings']
+        if findings and all(any(p in f for p in PROTECTED_PATHS) for f in findings):
+            # Developers may not edit controller/policy files and would only report no progress; go straight to the coordinator.
+            self.persist(stage='needs_attention',resume_role='code_reviewer',attention_kind='worker_failure',failure_kind='validation',receipts={},reason='Review findings target protected controller/policy files: '+report['next_action'])
+            self.event('attention',reason='Review findings target protected files; routed to coordinator',failure_kind='validation',attempt=1)
+            return
         issues=[issue_id(self.state.get('task'),f) for f in (report['findings'] or [report['next_action']])]
         counts=dict(self.state.get('issue_attempts',{}))
         previous=set(self.state.get('active_issue_ids',[]))
