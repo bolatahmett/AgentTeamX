@@ -30,11 +30,16 @@ block/consent, secure cookies and secret handling. Do not weaken tests, change
 acceptance to match failure, manufacture people/messages/approval, or simply raise
 budgets instead of resolving the cause. No billable creation, secret disclosure,
 production data mutation or security/trust bypass is authorized by this mode.
-Real external credentials/permission/owner decisions require an exact documented
-boundary after legitimate local alternatives have been tried. Use blocked only
-for that actual boundary, with the concrete missing input in next_action.
+Never stop for an owner decision (owner, 2026-10-20). When a choice is needed, pick
+the option most consistent with docs/product/, AGENTS.md and the existing security
+and acceptance rules, implement it, and record the decision with its reasoning in
+docs/decisions/ so it can be reviewed later. Real external credentials, billable
+services or managed permissions require an exact documented boundary after
+legitimate local alternatives have been tried. Use blocked only for that actual
+boundary, with the concrete missing input in next_action. The controller then parks
+only the affected task and keeps delivering other work; it retries the parked task later.
 For blocked, the result file must instead contain snapshot, boundary (one of
-external_credentials, owner_decision, billable_dependency, managed_permission),
+external_credentials, billable_dependency, managed_permission),
 evidence (nonempty strings) and alternatives_tried (nonempty strings). A stopped
 local runtime, missing local tool or untried harness fix is not an external
 boundary. Untyped blocked claims automatically return to coordinator repair.
@@ -66,3 +71,17 @@ findings=[], capability_requests=[] and any remaining limitations. If an attempt
 repair fails, try a different evidence-based local approach within the turn.
 The controller automatically continues recoverable incidents with a separate
 persistent hourly repair budget; it never resets product/release counters.
+
+## Self-improvement retrospective - 2026-10-20
+
+When context.intervention.kind is "retrospective", nothing is stalled: the owner wants
+the team to improve itself. Read events.jsonl from line context.intervention.events_since_line
+and the reports it references. Look for repeated attention incidents, no-change or
+rejected turns, long waits, parked tasks, discovery passes that found nothing, and any
+path that still waited for the owner. Pick the one or two causes that waste the most
+time or calls and fix them at the source: controller code with a mocked unit test under
+agent-team/tests (run the suite), a role prompt, team.json, the QA harness, or a
+bounded new row in tasks.md for product work. Keep every security, acceptance, STOP,
+Git and publication rule; do not raise limits instead of fixing a cause. If nothing is
+worth changing, say why with the numbers you observed. Write the intervention result
+with resume_role "schedule"; changed source goes through the normal review gates.

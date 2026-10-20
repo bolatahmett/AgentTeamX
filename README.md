@@ -533,3 +533,28 @@ for the exact commit (`gh run view <id> --log-failed`, its existing read-only gh
 artifacts/release-logs/ and lists the files in release_recovery.failure_logs, so DevOps and the
 coordinator can diagnose without their own GitHub access. Token-like strings and private keys are
 redacted. Event: release_logs_captured.
+
+## No owner waits - 2026-10-20
+
+Owner-selected; limits remain, but none of them stops the team.
+
+- External boundaries: a coordinator `blocked` report with a valid typed boundary parks only the
+  affected task/batch (and any release incident) and delivery continues (`park_external_blockers`).
+  `owner_decision` is no longer an accepted boundary: the coordinator decides, implements and
+  records the decision under docs/decisions/.
+- Parked rows (external boundary, exhausted delivery budget, repeated failed repair) carry
+  `retry_at` and return to scheduling after `park_retry_hours` (12) with a fresh delivery ledger.
+  `team.py reopen --task ID` still re-enables a row immediately.
+- No-progress breaker: after `max_interventions_per_incident` (3) coordinator repairs of the same
+  incident, the work is parked instead of looping. Events: blocked_work_parked, parked_tasks_retried.
+- The per-start call cap is a timed pause: stage waiting_budget for `call_budget_cooldown_seconds`
+  (1800), then a fresh call window resumes the same stage (call_budget_wait/call_budget_resumed).
+  Set it to null for the old stop behaviour.
+- Claude-run technical_lead and devops may run `gh run view` / `gh run list` (owner-authorized) only in the
+  read-only sandbox; every other sandbox keeps the blanket `gh *` deny (the controller supplies failure logs).
+  Other gh subcommands, Git mutation and network clients stay denied.
+- Self-improvement: with `self_improvement.enabled`, an idle team runs a coordinator retrospective
+  at most every `interval_hours` (12) when at least `min_new_events` (30) events were recorded. It
+  reads events/reports, fixes the costliest recurring waste (controller, prompts, config, harness or
+  a tasks.md row) and resumes `schedule`; changed source goes through the normal review gates and
+  the hourly repair ledger. Event: retrospective_started.

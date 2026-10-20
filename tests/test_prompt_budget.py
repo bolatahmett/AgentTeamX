@@ -149,6 +149,17 @@ class RoleContextTests(unittest.TestCase):
         self.assertIn('HEAD-SCOPE', path.read_text(encoding='utf-8'))
         self.assertEqual(self.controller.context('qa')['task_brief_file'], str(path))
 
+    def test_developer_brief_carries_gate_findings_when_no_task_is_assigned(self):
+        report = self.controller.folder / 'reports' / 'gate.json'
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps({'report': {'status': 'changes_requested', 'findings': ['FINDING-XYZ']}}), encoding='utf-8')
+        self.controller.persist(active_issue_ids=['i1'], reports={'code_reviewer': str(report)})
+        text = self.controller.write_task_brief('developer').read_text(encoding='utf-8')
+        self.assertIn('Source repair assignment', text)
+        self.assertIn('FINDING-XYZ', text)
+        self.controller.persist(active_issue_ids=[])
+        self.assertNotIn('Source repair assignment', self.controller.write_task_brief('developer').read_text(encoding='utf-8'))
+
     def test_brief_failure_degrades_to_a_note(self):
         (self.project / 'tasks.md').write_bytes(b'\xff\xfe\x00bad')
         path = self.controller.write_task_brief('developer')

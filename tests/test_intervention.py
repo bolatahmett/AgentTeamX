@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from unittest.mock import MagicMock
@@ -172,9 +173,142 @@ class InterventionTests(unittest.TestCase):
                        'evidence':['Observed managed policy denial'],
                        'alternatives_tried':['Existing permitted local alternative was unavailable']})
         self.effects['technical_lead']=boundary
+        c.config['park_external_blockers']=False
         c.step();c.step()
         self.assertEqual(c.state['attention_kind'],'external_blocker')
         self.assertEqual(self.roles,['code_reviewer','technical_lead'])
+
+    def test_external_boundary_parks_only_the_task_and_retries_it_later(self):
+        c=self.stalled();c.step()
+        self.responses['technical_lead']=test_team.report('blocked')
+        def boundary(kind='managed_permission'):
+            team.save(c.folder/'artifacts'/'technical_lead'/'intervention-result.json',
+                      {'snapshot':c.state['snapshot'],'boundary':kind,
+                       'evidence':['Observed managed policy denial'],
+                       'alternatives_tried':['Existing permitted local alternative was unavailable']})
+        self.effects['technical_lead']=boundary
+        c.step()
+        self.assertEqual(c.state['stage'],'schedule')
+        self.assertIn('T1',c.state['parked_tasks'])
+        self.assertFalse(c.state['intervention']['active'])
+        self.assertEqual(c.schedulable(['T1']),[])
+        with patch.object(team.time,'time',return_value=c.state['parked_tasks']['T1']['retry_at']+1):
+            self.assertEqual(c.schedulable(['T1']),['T1'])
+        self.assertNotIn('T1',c.state['parked_tasks'])
+
+    def test_owner_decision_is_not_an_accepted_boundary(self):
+        c=self.stalled();c.step()
+        self.responses['technical_lead']=test_team.report('blocked')
+        def boundary():
+            team.save(c.folder/'artifacts'/'technical_lead'/'intervention-result.json',
+                      {'snapshot':c.state['snapshot'],'boundary':'owner_decision',
+                       'evidence':['Two options exist'],'alternatives_tried':['None']})
+        self.effects['technical_lead']=boundary
+        c.step()
+        self.assertEqual(c.state['attention_kind'],'intervention_result_invalid')
+
+    def test_repeated_unsuccessful_repairs_park_work_instead_of_looping(self):
+        c=self.stalled()
+        c.config['max_interventions_per_incident']=2
+        self.responses['technical_lead']=test_team.report('completed')
+        stall=dict(stage='needs_attention',resume_role='qa',attention_kind='worker_failure',
+                   failure_kind='filesystem',reason='Transient state replacement failed')
+        for _ in range(2):
+            c.persist(**stall);c.step()
+            self.assertEqual(c.state['stage'],'technical_lead')
+            c.persist(intervention={**c.state['intervention'],'active':False})
+        c.persist(**stall);c.step()
+        self.assertEqual(c.state['stage'],'schedule')
+        self.assertIn('T1',c.state['parked_tasks'])
+        self.assertEqual(c.state['incident_attempts'],{})
+
+    def test_taskless_incident_is_parked_by_incident_key_with_retry(self):
+        c=self.stalled()
+        c.persist(task=None,delivery_batch=None,intervention={'active':True,'incident':'abc123'})
+        c.park_blocked_work('Acceptance blocked')
+        entry=c.state['parked_tasks']['incident:abc123']
+        self.assertGreater(entry['retry_at'],team.time.time())
+        self.assertEqual(c.state['stage'],'schedule')
+        with patch.object(team.time,'time',return_value=entry['retry_at']+1):
+            c.schedulable(['T1'])
+        self.assertNotIn('incident:abc123',c.state['parked_tasks'])
+
+    def test_parked_release_recovery_is_retried_while_failure_is_recorded(self):
+        c=self.stalled();sha='a'*40
+        c.persist(published_commit=sha,release_recovery={'active':True,'incident':sha},task=None,delivery_batch=None)
+        c.park_blocked_work('External boundary (managed_permission): needs access')
+        parked=c.state['release_recovery']
+        self.assertTrue(parked['parked'] and not parked['active'])
+        c.persist(stage='schedule')
+        self.assertFalse(c.retry_parked_release())
+        team.save(c.folder/'release-observation.json',{'ci':'failed','commit':sha})
+        with patch.object(team.time,'time',return_value=parked['retry_at']+1):
+            self.assertTrue(c.retry_parked_release())
+        self.assertEqual(c.state['stage'],'devops')
+        self.assertTrue(c.state['release_recovery']['active'])
+        c.persist(release_recovery={**parked,'active':False,'parked':True})
+        team.save(c.folder/'release-observation.json',{'ci':'success','commit':sha})
+        with patch.object(team.time,'time',return_value=parked['retry_at']+1):
+            self.assertFalse(c.retry_parked_release())
+        self.assertFalse(c.state['release_recovery']['parked'])
+
+    def test_old_successful_repairs_do_not_exhaust_attempts(self):
+        c=self.stalled()
+        c.config['max_interventions_per_incident']=2
+        self.responses['technical_lead']=test_team.report('completed')
+        stall=dict(stage='needs_attention',resume_role='qa',attention_kind='worker_failure',
+                   failure_kind='filesystem',reason='Transient state replacement failed')
+        for _ in range(4):
+            c.persist(**stall);c.step()
+            self.assertEqual(c.state['stage'],'technical_lead')
+            c.persist(intervention={**c.state['intervention'],'active':False})
+            old={k:v-7*3600 for k,v in c.state['incident_attempt_at'].items()}
+            c.persist(incident_attempt_at=old)
+            self.assertEqual(sum(c.state['incident_attempts'].values()),1)
+            self.assertFalse(c.state.get('parked_tasks'))
+
+    def test_parked_taskless_incident_is_not_reintervened_before_retry(self):
+        c=self.stalled()
+        c.persist(task=None,delivery_batch=None)
+        stall=dict(stage='needs_attention',resume_role='qa',attention_kind='acceptance_blocked',
+                   reason='Product-wide acceptance block',intervention=None)
+        c.persist(**stall);c.step()
+        incident=c.state['intervention']['incident']
+        c.persist(parked_tasks={'incident:'+incident:{'at':'x','retry_at':time.time()+3600,'reason':'r'}},
+                  intervention=None,**{k:v for k,v in stall.items() if k!='intervention'})
+        before=self.roles.count('technical_lead')
+        c.step()
+        self.assertNotEqual(c.state['stage'],'technical_lead')
+        self.assertEqual(self.roles.count('technical_lead'),before)
+
+    def test_invalid_result_reruns_are_counted_and_park_work(self):
+        c=self.stalled()
+        c.config['max_interventions_per_incident']=2
+        self.responses['technical_lead']=test_team.report('completed')
+        for _ in range(8):
+            c.step()
+            if 'T1' in (c.state.get('parked_tasks') or {}):break
+        self.assertIn('T1',c.state['parked_tasks'])
+        self.assertLessEqual(self.roles.count('technical_lead'),2)
+
+    def test_retrospective_runs_when_idle_and_due(self):
+        c=self.stalled()
+        c.config['self_improvement']={'enabled':True,'interval_hours':12,'min_new_events':1}
+        c.persist(stage='idle',intervention=None,task=None)
+        c.event('role_finished',role='qa')
+        seen={}
+        def retro():
+            seen['intervention']=c.context('technical_lead')['intervention']
+            team.save(c.folder/'artifacts'/'technical_lead'/'intervention-result.json',
+                      {'snapshot':c.state['snapshot'],'resume_role':'schedule','evidence':['Observed no recurring waste']})
+        self.effects['technical_lead']=retro
+        self.responses['technical_lead']=test_team.report('completed')
+        c.step()
+        self.assertEqual(seen['intervention']['kind'],'retrospective')
+        self.assertEqual(self.roles[-1],'technical_lead')
+        self.assertEqual(c.state['stage'],'schedule')
+        self.assertFalse(c.state['intervention']['active'])
+        self.assertFalse(c.retrospective_due())
 
     def test_budget_waits_and_recovers_automatically_without_resetting_ledgers(self):
         c=self.stalled();c.step()

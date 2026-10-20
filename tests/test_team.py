@@ -487,6 +487,17 @@ class TeamTests(unittest.TestCase):
         self.controller.persist(calls=self.controller.config['max_calls_per_start'])
         self.controller.step()
         self.assertEqual(self.roles, [])
+        self.assertEqual(self.controller.state['stage'], 'waiting_budget')
+        self.controller.step()
+        self.assertEqual(self.roles, [])
+        # The cooldown is a timed pause: afterwards a fresh call window resumes the same stage.
+        with patch.object(team.time, 'time', return_value=self.controller.state['budget_not_before'] + 1):
+            self.controller.step()
+        self.assertEqual(self.controller.state['stage'], 'code_reviewer')
+        self.assertEqual(self.controller.state['calls'], 0)
+        self.controller.config['call_budget_cooldown_seconds'] = None
+        self.controller.persist(stage='code_reviewer', calls=self.controller.config['max_calls_per_start'])
+        self.controller.step()
         self.assertEqual(self.controller.state['stage'], 'needs_attention')
 
     def test_blocked_planner_keeps_intake_unconsumed(self):

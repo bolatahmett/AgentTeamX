@@ -184,6 +184,24 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.claude_args('claude', 'qa', 'bogus')
 
+    def test_only_release_diagnosis_roles_may_read_github_runs(self):
+        lead = self.controller.claude_args('claude', 'technical_lead', 'danger-full-access')
+        self.assertIn('Bash(gh *)', lead[lead.index('--disallowedTools') + 1].split(','))  # catch-all: covers aliases such as gh ext/var
+        lead = self.controller.claude_args('claude', 'technical_lead', 'read-only')
+        denied = lead[lead.index('--disallowedTools') + 1].split(',')
+        self.assertNotIn('Bash(gh *)', denied)
+        for rule in ('Bash(gh api *)', 'Bash(gh auth *)', 'Bash(gh pr *)', 'Bash(gh secret *)',
+                     'Bash(gh run rerun *)', 'Bash(gh workflow *)', 'Bash(git push *)', 'Bash(curl *)',
+                     'Bash(gh agent-task *)', 'Bash(gh copilot *)', 'Bash(gh search *)', 'Bash(gh status *)', 'Bash(gh preview *)', 'Bash(gh -*)', 'Bash(gh --*)', 'Bash(gh run -*)', 'Bash(gh actions *)', 'Bash(gh cs *)'):
+            self.assertIn(rule, denied)
+        devops = self.controller.claude_args('claude', 'devops', 'read-only')
+        self.assertIn('Bash(gh run view *)', devops[devops.index('--allowedTools') + 1])
+        self.assertIn('Bash(gh api *)', devops[devops.index('--disallowedTools') + 1])
+        for role, sandbox in (('developer', 'danger-full-access'), ('code_reviewer', 'read-only'), ('qa', 'danger-full-access')):
+            args = self.controller.claude_args('claude', role, sandbox)
+            self.assertIn('Bash(gh *)', args[args.index('--disallowedTools') + 1].split(','))
+            self.assertNotIn('gh run view', args[args.index('--allowedTools') + 1] if '--allowedTools' in args else '')
+
     def test_every_claude_sandbox_restricts_tools_and_denies_git_and_network(self):
         for sandbox, role in (('danger-full-access', 'developer'), ('workspace-write', 'planner'), ('read-only', 'code_reviewer')):
             args = self.controller.claude_args('claude', role, sandbox)

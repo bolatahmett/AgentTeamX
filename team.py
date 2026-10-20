@@ -45,6 +45,19 @@ CLAUDE_DENIED = ('Bash(git push *)','Bash(git commit *)','Bash(git reset *)','Ba
                  'Bash(git remote *)','Bash(git config *)','Bash(git update-ref *)','Bash(git -c *)','Bash(git -C *)',
                  'Bash(gh *)','Bash(curl *)','Bash(wget *)','Bash(ssh *)','Bash(scp *)','Bash(Invoke-WebRequest *)','Bash(iwr *)',
                  'Bash(Invoke-RestMethod *)','Bash(irm *)','Bash(*--output*)','Bash(*--ext-diff*)','Bash(*--textconv*)')
+# Owner-authorized 2026-10-20: release diagnosis roles may read GitHub Actions runs and logs.
+# Only `gh run view` / `gh run list` stay reachable, and only in the read-only (dontAsk, allowlist) sandbox. Deny rules beat
+# allow rules, so there the catch-all `gh *` deny is replaced by named denies as defense in depth; every other sandbox keeps `gh *`.
+GH_READ_ROLES = {'technical_lead','devops'}
+GH_READ_ALLOWED = ('Bash(gh run view *)','Bash(gh run list *)')
+GH_DENIED = ('Bash(gh auth *)','Bash(gh api *)','Bash(gh pr *)','Bash(gh repo *)','Bash(gh release *)','Bash(gh secret *)',
+             'Bash(gh variable *)','Bash(gh workflow *)','Bash(gh issue *)','Bash(gh gist *)','Bash(gh config *)',
+             'Bash(gh extension *)','Bash(gh alias *)','Bash(gh codespace *)','Bash(gh ssh-key *)','Bash(gh gpg-key *)',
+             'Bash(gh label *)','Bash(gh cache *)','Bash(gh ruleset *)','Bash(gh project *)','Bash(gh org *)',
+             'Bash(gh browse *)','Bash(gh attestation *)','Bash(gh run rerun *)','Bash(gh run cancel *)',
+             'Bash(gh run delete *)','Bash(gh run download *)','Bash(gh run watch *)','Bash(gh agent-task *)','Bash(gh copilot *)',
+             'Bash(gh preview *)','Bash(gh search *)','Bash(gh status *)','Bash(gh completion *)','Bash(gh co *)',
+             'Bash(gh skill *)','Bash(gh licenses *)','Bash(gh accessibility *)','Bash(gh actions *)','Bash(gh cs *)','Bash(gh gh *)','Bash(gh ext *)','Bash(gh extensions *)','Bash(gh var *)','Bash(gh rs *)','Bash(gh at *)','Bash(gh agent *)','Bash(gh agents *)','Bash(gh -*)','Bash(gh --*)','Bash(gh run -*)','Bash(gh run --*)')
 
 
 def failed_run_log(run):
@@ -537,8 +550,23 @@ class Team:
         path.parent.mkdir(parents=True,exist_ok=True)
         try:text=task_brief(self.project,[i for i in ids if i],int(self.config.get('task_brief_limit_chars',40000)))
         except Exception as exc:text='Task brief unavailable ('+type(exc).__name__+'); search tasks.md directly for the assigned IDs.\n'
+        text+=self.source_repair_section(role)
         path.write_text(text,encoding='utf-8')
         return path
+
+    def source_repair_section(self,role):
+        """A gate-requested repair has no task row; hand the developer the gate findings as its assignment."""
+        if role!='developer' or not self.state.get('active_issue_ids'):return ''
+        parts=[]
+        for gate,rel in (self.state.get('reports') or {}).items():
+            data=load(self.project/rel,{}) if rel else {}
+            report=data.get('report') if isinstance(data,dict) else None
+            if not isinstance(report,dict) or report.get('status')!='changes_requested':continue
+            parts+=['### Findings from %s (%s)'%(gate,rel),'']+['- '+f for f in report.get('findings',[])]+['']
+        if not parts:return ''
+        return ('\n## Source repair assignment\n'
+                'No task row is needed: the findings below are your assigned work. Fix them in the current source, '
+                'run targeted checks and report the result.\n\n'+'\n'.join(parts))
 
     def review_input_paths(self,role):
         """Controller-written snapshot evidence for read-only roles whose shell cannot run the fingerprint command."""
@@ -626,7 +654,10 @@ class Team:
               # No --mcp-config: drops claude.ai connectors and user MCP servers, which --tools does not restrict.
               '--strict-mcp-config']
         # Deny rules win over allow rules and over bypass mode, so every sandbox keeps them.
-        denied=','.join(CLAUDE_DENIED)
+        # Only the read-only sandbox (dontAsk: anything not allowlisted is refused) can carry the gh allowance without
+        # a name-by-name deny list; full-access and workspace-write roles keep the blanket `gh *` deny.
+        gh_read=role in GH_READ_ROLES and sandbox=='read-only'
+        denied=','.join([d for d in CLAUDE_DENIED if d!='Bash(gh *)']+list(GH_DENIED) if gh_read else CLAUDE_DENIED)
         if sandbox=='danger-full-access':
             args+=['--dangerously-skip-permissions','--tools',CLAUDE_TOOLS,'--disallowedTools',denied]
         elif sandbox=='workspace-write':
@@ -635,7 +666,8 @@ class Team:
         elif sandbox=='read-only':
             args+=['--permission-mode','dontAsk','--permission-prompts','none',
                    '--tools','Read,Grep,Glob,Bash',
-                   '--allowedTools','Read,Grep,Glob,Bash(git diff *),Bash(git status *),Bash(git log *),Bash(git show *),Bash(git ls-files *)',
+                   '--allowedTools','Read,Grep,Glob,Bash(git diff *),Bash(git status *),Bash(git log *),Bash(git show *),Bash(git ls-files *)'+
+                   (','+','.join(GH_READ_ALLOWED) if gh_read else ''),
                    '--disallowedTools','Edit,Write,NotebookEdit,'+denied]
         else:raise ValueError('Invalid local execution sandbox')
         return args
@@ -986,6 +1018,12 @@ class Team:
         self.restore_repair_validation(before)
         validation=self.repair_validation(role,before)
         if not intervention and not validation and self.state.get('calls',0)>=self.config['max_calls_per_start']:
+            cooldown=self.config.get('call_budget_cooldown_seconds',1800)
+            if cooldown is not None:
+                # Owner-selected autonomy (2026-10-20): the per-start cap is a timed pause, not a stop.
+                self.persist(stage='waiting_budget',resume_role=role,attention_kind='call_budget',budget_not_before=time.time()+cooldown,
+                             reason='Per-start agent call budget reached; resuming automatically after cooldown')
+                self.event('call_budget_wait',role=role,seconds=cooldown);return
             self.persist(stage='needs_attention',resume_role=role,attention_kind='call_budget',reason='Per-start agent call budget reached');return
         active=competing_processes(self.project)
         if active:raise RuntimeError('Competing writer detected before role start')
@@ -1000,10 +1038,13 @@ class Team:
             tasks=[t for t in (batch.get('tasks') or [self.state.get('task')]) if t]
             if tasks:
                 # Owner-selected autonomy: an exhausted task is parked and delivery moves on instead of stopping.
-                parked={**(self.state.get('parked_tasks') or {}),**{t:{'at':stamp(),'calls':ledger[mission],'reason':self.state.get('reason')} for t in tasks}}
+                retry_at=time.time()+float(self.config.get('park_retry_hours',12))*3600
+                parked={**(self.state.get('parked_tasks') or {}),**{t:{'at':stamp(),'retry_at':retry_at,'calls':ledger[mission],'reason':self.state.get('reason')} for t in tasks}}
+                # A retried row gets a fresh delivery ledger; the old count stays visible in parked history.
+                spent=ledger.pop(mission,0);self.persist(**{ledger_name:ledger})
                 self.persist(stage='schedule',parked_tasks=parked,task=None,delivery_batch=None,receipts={},attempts=0,
                              reason='Delivery budget exhausted for '+', '.join(tasks)+'; parked, continuing with other work')
-                self.event('delivery_budget_parked',tasks=tasks,calls=ledger[mission]);return
+                self.event('delivery_budget_parked',tasks=tasks,calls=spent);return
         if not intervention and not validation and ledger.get(mission,0)>=limit:
             self.persist(stage='needs_attention',attention_kind='release_recovery_budget' if recovering else 'delivery_budget',reason='Release recovery budget exhausted; inspect the unresolved failure' if recovering else 'Delivery budget exhausted without acceptance; inspect the concrete failed check instead of restarting the agent chain')
             self.event('release_recovery_budget_exhausted' if recovering else 'delivery_budget_exhausted',task=self.state.get('task'),calls=ledger[mission]);return
@@ -1292,11 +1333,37 @@ class Team:
                           'failure_kind':self.state.get('failure_kind'),'resume_role':resume,
                           'snapshot':current['fingerprint'],'started_at':stamp()}
         incident=intervention['incident']
+        parked_entry=(self.state.get('parked_tasks') or {}).get('incident:'+str(incident))
+        if (not intervention.get('started') and isinstance(parked_entry,dict) and
+                time.time()<parked_entry.get('retry_at',0)):
+            # A parked taskless incident stays suppressed until its retry_at: no new coordinator run.
+            self.persist(stage='schedule',attention_kind=None,failure_kind=None,intervention=None,
+                         reason='Incident is parked until its retry time; continuing other work')
+            self.event('parked_incident_suppressed',incident=incident,retry_at=parked_entry.get('retry_at'))
+            return True
+        attempts=dict(self.state.get('incident_attempts',{}))
+        seen=dict(self.state.get('incident_attempt_at',{}))
+        # Attempts only count consecutive failures: a recurrence after the window is a new incident.
+        window=self.config.get('incident_attempt_window_seconds',6*3600)
+        if time.time()-seen.get(incident,time.time())>window:
+            attempts.pop(incident,None);seen.pop(incident,None)
+        cap=self.config.get('max_interventions_per_incident',3)
+        if cap is not None and attempts.get(incident,0)>=cap:
+            # Owner-selected autonomy (2026-10-20): repeated unsuccessful repairs park the stuck work
+            # instead of looping or waiting for the owner; a later recurrence gets fresh attempts.
+            attempts.pop(incident,None);seen.pop(incident,None);self.persist(incident_attempts=attempts,incident_attempt_at=seen)
+            self.park_blocked_work('Coordinator repairs did not clear the incident after '+str(cap)+' attempts: '+str(intervention.get('reason'))[:300])
+            return True
         ledger,deadline=self.repair_budget(incident)
         if deadline:
             self.persist(stage='waiting_recovery',intervention=intervention,intervention_not_before=deadline,
                          reason='Automatic repair call budget cooling down; recovery will resume without owner retry')
             return False
+        # Every coordinator worker run counts once, including re-runs after an invalid result file.
+        attempts[incident]=attempts.get(incident,0)+1
+        seen[incident]=time.time()
+        intervention={**intervention,'started':True}
+        self.persist(incident_attempts=attempts,incident_attempt_at=seen)
         self.persist(stage='technical_lead',resume_role='technical_lead',intervention=intervention,
                      intervention_calls=ledger,intervention_not_before=0,snapshot=current['fingerprint'],
                      receipts=retained_gates(self.state.get('receipts',{}),current),
@@ -1304,13 +1371,34 @@ class Team:
         self.event('autonomous_intervention_started',incident=incident,resume_role=intervention['resume_role'])
         return True
 
+    def park_blocked_work(self,reason):
+        """Owner-selected autonomy (2026-10-20): park only the blocked task/batch and keep delivering.
+        Parked rows are retried after park_retry_hours; nothing is approved or closed."""
+        batch=self.state.get('delivery_batch') or {}
+        tasks=[t for t in (batch.get('tasks') or [self.state.get('task')]) if t]
+        retry_at=time.time()+float(self.config.get('park_retry_hours',12))*3600
+        recovery=self.state.get('release_recovery') or {}
+        intervention=self.state.get('intervention') or {}
+        if not tasks and not recovery.get('active'):
+            # Taskless incident (for example a product-wide acceptance block): park it by incident or
+            # issue-id key so it carries a retry_at that scheduling honours instead of vanishing.
+            key=intervention.get('incident') or next(iter(self.state.get('active_issue_ids') or []),None)
+            if key:tasks=['incident:'+str(key)]
+        parked={**(self.state.get('parked_tasks') or {}),**{t:{'at':stamp(),'retry_at':retry_at,'reason':reason} for t in tasks}}
+        if recovery.get('active'):recovery={**recovery,'active':False,'parked':True,'parked_reason':reason,'retry_at':retry_at}
+        self.persist(stage='schedule',parked_tasks=parked,task=None,delivery_batch=None,receipts={},attempts=0,
+                     release_recovery=recovery or None,attention_kind=None,failure_kind=None,
+                     intervention={**intervention,'active':False} if intervention else None,
+                     reason='Parked blocked work and continuing: '+reason)
+        self.event('blocked_work_parked',tasks=tasks,retry_at=retry_at,reason=reason)
+
     def finish_intervention(self,report,before,after,report_path):
         intervention=self.state['intervention']
         if report['status']=='blocked':
             boundary=load(self.folder/'artifacts'/'technical_lead'/'intervention-result.json',{})
             if (not isinstance(boundary,dict) or set(boundary)!={'snapshot','boundary','evidence','alternatives_tried'} or
                 boundary.get('snapshot')!=before['fingerprint'] or boundary.get('boundary') not in
-                {'external_credentials','owner_decision','billable_dependency','managed_permission'} or
+                {'external_credentials','billable_dependency','managed_permission'} or
                 report['findings'] or report['capability_requests'] or
                 any(not isinstance(boundary.get(key),list) or not boundary[key] or
                     not all(isinstance(item,str) and item.strip() for item in boundary[key])
@@ -1318,10 +1406,15 @@ class Team:
                 self.persist(stage='needs_attention',resume_role='technical_lead',attention_kind='intervention_result_invalid',
                              reason='Unconfirmed external blocker; coordinator must repair local causes or document actual external boundary')
                 return
+            self.event('external_intervention_boundary',report=report_path)
+            if intervention.get('kind')=='retrospective' or self.config.get('park_external_blockers',True):
+                # Owner-selected autonomy (2026-10-20): park only the blocked work, keep delivering, retry later.
+                self.persist(intervention={**intervention,'active':False,'report':report_path,'completed_at':stamp()})
+                self.park_blocked_work('External boundary ('+str(boundary['boundary'])+'): '+report['next_action'])
+                return
             self.persist(stage='needs_attention',intervention={**intervention,'active':False},
                          resume_role=intervention['resume_role'],attention_kind='external_blocker',
                          reason=report['next_action'])
-            self.event('external_intervention_boundary',report=report_path)
             return
         try:
             if report['status'] not in {'completed','passed'}:raise ValueError('Coordinator repair did not complete')
@@ -1379,8 +1472,28 @@ class Team:
             # Done rows need no memory; `team.py reopen --task ID` re-enables a row for real rework.
             done={r['id'] for r in backlog(self.project)[0] if r['checked']}
             if released&done:self.persist(released_tasks=sorted(released-done));released-=done
-        parked=set(self.state.get('parked_tasks') or {})
+        parked=dict(self.state.get('parked_tasks') or {})
+        # Parked work is retried automatically once its retry time passes; no owner reopen is needed.
+        due=[t for t,v in parked.items() if isinstance(v,dict) and v.get('retry_at') is not None and time.time()>=v['retry_at']]
+        if due:
+            for t in due:parked.pop(t)
+            self.persist(parked_tasks=parked)
+            self.event('parked_tasks_retried',tasks=due)
         return [t for t in ready if t not in released and t not in parked]
+
+    def retry_parked_release(self):
+        """A parked release-recovery incident is retried once due while the exact published commit still shows a failure."""
+        recovery=self.state.get('release_recovery') or {}
+        if recovery.get('active') or not recovery.get('parked') or time.time()<recovery.get('retry_at',0):return False
+        observation=load(self.folder/'release-observation.json',{}) or {}
+        commit=self.state.get('published_commit')
+        if observation.get('ci')=='failed' and commit and observation.get('commit')==commit:
+            self.event('parked_release_recovery_retried',commit=commit)
+            self.begin_release_recovery(commit,'Parked release failure is still recorded for the published commit; retrying recovery')
+            return True
+        self.persist(release_recovery={**recovery,'parked':False})
+        self.event('parked_release_recovery_cleared',commit=commit)
+        return False
 
     def reopen(self,task):
         released=set(self.state.get('released_tasks') or []);parked=dict(self.state.get('parked_tasks') or {})
@@ -1394,6 +1507,37 @@ class Team:
         cfg=self.config.get('autonomous_discovery') or {}
         if not cfg.get('enabled') or self.inputs():return False
         return time.time()>=(self.state.get('discovery') or {}).get('next_at',0)
+
+    def event_count(self):
+        try:
+            with (self.folder/'events.jsonl').open('rb') as f:return sum(1 for _ in f)
+        except OSError:return 0
+
+    def retrospective_due(self):
+        """Owner-selected self-improvement: periodically let the coordinator fix recurring waste in the team itself."""
+        cfg=self.config.get('self_improvement') or {}
+        if not cfg.get('enabled') or not self.config.get('autonomous_intervention') or self.stop.exists():return False
+        last=self.state.get('retrospective') or {}
+        if time.time()-last.get('at',0)<float(cfg.get('interval_hours',12))*3600:return False
+        return self.event_count()-last.get('events',0)>=int(cfg.get('min_new_events',30))
+
+    def start_retrospective(self):
+        current=snapshot(self.project)
+        incident='retrospective:'+stamp()[:13]
+        ledger,deadline=self.repair_budget(incident)
+        if deadline:return False
+        previous=(self.state.get('retrospective') or {})
+        intervention={'active':True,'started':True,'kind':'retrospective','incident':incident,'task':None,
+                      'reason':'Periodic self-improvement retrospective: find recurring stalls, wasted turns and owner waits in events and reports since the last retrospective, and fix their cause',
+                      'attention_kind':'retrospective','failure_kind':None,'resume_role':'schedule',
+                      'events_since_line':previous.get('events',0),
+                      'snapshot':current['fingerprint'],'started_at':stamp()}
+        self.persist(stage='technical_lead',resume_role='technical_lead',intervention=intervention,intervention_calls=ledger,
+                     task=None,delivery_batch=None,snapshot=current['fingerprint'],receipts={},attention_kind='retrospective',
+                     retrospective={'at':time.time(),'events':self.event_count(),'started_at':stamp()},
+                     reason='Coordinator self-improvement retrospective')
+        self.event('retrospective_started',incident=incident)
+        return True
 
     def exploring(self):
         """True while a discovery pass is in its QA exploratory UI walk."""
@@ -1590,6 +1734,18 @@ class Team:
                      reason='Local cooldown elapsed; resume incomplete QA scenarios' if role=='qa' else 'Source changed during cooldown; fresh review required')
         self.event('local_wait_resumed',role=role,report=wait.get('report'))
 
+    def resume_budget_wait(self):
+        """Start a new call window after the cooldown; gates and delivery ledgers are unchanged."""
+        if self.stop.exists() or time.time()<self.state.get('budget_not_before',float('inf')):return
+        current=snapshot(self.project)
+        role=self.state.get('resume_role')
+        if role not in ROLES:role='schedule'
+        if role in GATES and current['fingerprint']!=self.state.get('snapshot'):role='code_reviewer'
+        self.persist(stage=role,calls=0,budget_not_before=None,attention_kind=None,snapshot=current['fingerprint'],
+                     receipts=retained_gates(self.state.get('receipts',{}),current),
+                     reason='Call budget cooldown elapsed; resuming '+role+' automatically')
+        self.event('call_budget_resumed',role=role)
+
     def retry(self):
         if self.lock.exists() or competing_processes(self.project):
             raise RuntimeError('Stop coordinator and workers before retry')
@@ -1621,6 +1777,9 @@ class Team:
         if stage=='waiting_local':
             self.resume_local_wait()
             return
+        if stage=='waiting_budget':
+            self.resume_budget_wait()
+            return
         if stage=='uninitialized':raise RuntimeError('Initialize the team first')
         # Partial edits from a failed turn must never bypass STOP/quota/policy gates.
         if stage in {'needs_attention','waiting_for_quota'}:return
@@ -1635,10 +1794,13 @@ class Team:
             self.persist(stage='planner');stage='planner'
         if stage=='idle' and self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
             self.persist(stage='ux_reviewer');stage='ux_reviewer'
+        if stage=='idle' and self.retrospective_due() and self.start_retrospective():
+            stage='technical_lead'
         if stage=='idle' and self.discovery_due():
             self.start_discovery();stage=self.state['stage']
         if stage in TERMINAL:return
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
+        if stage=='schedule' and self.retry_parked_release():stage=self.state['stage']
         if stage=='schedule':
             raw=backlog(self.project)[1]
             delivered=self.state.get('delivered_release') or {}

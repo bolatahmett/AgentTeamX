@@ -100,6 +100,11 @@
   "qa_acceptance_tasks": [],
   "auto_batch_size": 3,
   "autonomous_discovery": {"enabled": true, "qa_exploration": true, "interval_minutes": 60, "max_interval_hours": 24},
+  "self_improvement": {"enabled": true, "interval_hours": 12, "min_new_events": 30},
+  "park_external_blockers": true,
+  "park_retry_hours": 12,
+  "max_interventions_per_incident": 3,
+  "call_budget_cooldown_seconds": 1800,
   "delivery_batches": [
     {
       "id": "presence-return-20261018",
