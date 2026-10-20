@@ -134,7 +134,11 @@ def snapshot(project):
         if path.is_symlink():
             value = 'symlink:'+os.readlink(path)
         elif path.is_file():
-            value = hashlib.sha256(path.read_bytes()).hexdigest()
+            data = path.read_bytes()
+            if name.endswith('next-env.d.ts'):
+                # Next rewrites this generated file for whichever distDir last built; ignore that churn.
+                data = re.sub(rb'\.next(?:-verify|-dev)?/',b'.next/',data).replace(b'\r\n',b'\n')
+            value = hashlib.sha256(data).hexdigest()
         else:
             value = 'deleted'
         files[name] = value

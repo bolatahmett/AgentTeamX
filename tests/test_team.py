@@ -850,3 +850,18 @@ class LocalWaitTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GeneratedNextEnvSnapshotTests(unittest.TestCase):
+    def test_next_env_distdir_churn_does_not_change_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            subprocess.run(['git','init','-q',str(root)],check=True)
+            (root/'apps/web').mkdir(parents=True)
+            target=root/'apps/web/next-env.d.ts'
+            target.write_bytes(b'/// <reference path="./.next/types/routes.d.ts" />\n')
+            subprocess.run(['git','-C',str(root),'add','.'],check=True)
+            subprocess.run(['git','-C',str(root),'-c','user.name=t','-c','user.email=t@t','commit','-qm','x'],check=True)
+            before=team.snapshot(root)
+            target.write_bytes(b'/// <reference path="./.next-verify/types/routes.d.ts" />\r\n')
+            self.assertEqual(before['files'],team.snapshot(root)['files'])
