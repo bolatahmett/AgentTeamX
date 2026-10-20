@@ -875,3 +875,19 @@ class GeneratedNextEnvSnapshotTests(unittest.TestCase):
             before=team.snapshot(root)
             target.write_bytes(b'/// <reference path="./.next-verify/types/routes.d.ts" />\r\n')
             self.assertEqual(before['files'],team.snapshot(root)['files'])
+
+
+class UxEvidenceSnapshotTests(unittest.TestCase):
+    def test_ux_screenshots_do_not_change_snapshot_but_docs_do(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            subprocess.run(['git','init','-q',str(root)],check=True)
+            (root/'a.txt').write_text('x',encoding='utf-8')
+            subprocess.run(['git','-C',str(root),'add','.'],check=True)
+            subprocess.run(['git','-C',str(root),'-c','user.name=t','-c','user.email=t@t','commit','-qm','x'],check=True)
+            before=team.snapshot(root)
+            (root/'docs/ux/T1').mkdir(parents=True)
+            (root/'docs/ux/T1/shot.png').write_bytes(b'png')
+            self.assertEqual(before['fingerprint'],team.snapshot(root)['fingerprint'])
+            (root/'docs/ux/T1/notes.md').write_text('n',encoding='utf-8')
+            self.assertNotEqual(before['fingerprint'],team.snapshot(root)['fingerprint'])

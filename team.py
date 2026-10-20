@@ -128,11 +128,17 @@ def machinery_fingerprint(home=None):
 PROTECTED_PATHS=('agent-team/','codex-supervisor-windows/','scripts/start-product-team.ps1','scripts/stop-product-team.ps1','scripts/status-product-team.ps1','Team.cmd','AGENTS.md','CLAUDE.md','agent.md')
 
 
+def is_ux_evidence(name):
+    # QA screenshots under docs/ux/<task>/ are acceptance evidence, not source; they must not void gates.
+    return name.startswith('docs/ux/') and name.lower().endswith(('.png','.jpg','.jpeg','.webp'))
+
+
 def snapshot(project):
     # Include tracked deletions and untracked source; never read ignored secrets/cache.
     paths = sorted(set(git(project,'ls-files','--cached','--others','--exclude-standard','-z').decode('utf-8').split('\0'))-{''})
     files = {}
     for name in paths:
+        if is_ux_evidence(name):continue
         path = project / name
         if path.is_symlink():
             value = 'symlink:'+os.readlink(path)
