@@ -96,7 +96,7 @@
     "technical_lead": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
   },
   "release_diagnostic_model": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "qa_acceptance_tasks": ["T107", "T106", "T104", "T101", "T102", "T98", "T88", "T74", "T103"],
+  "qa_acceptance_tasks": ["T103A", "T103B", "T103C", "T103D", "T103"],
   "auto_batch_size": 1,
   "autonomous_discovery": {"enabled": true, "qa_exploration": true, "interval_minutes": 60, "max_interval_hours": 24},
   "self_improvement": {"enabled": true, "interval_hours": 12, "min_new_events": 30},
