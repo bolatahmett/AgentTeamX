@@ -1222,6 +1222,10 @@ class Team:
                 self.event('call_budget_wait',role=role,seconds=cooldown);return
             self.persist(stage='needs_attention',resume_role=role,attention_kind='call_budget',reason='Per-start agent call budget reached');return
         active=competing_processes(self.project)
+        # A just-finished worker tree can linger briefly; recheck before declaring a real competitor.
+        for _ in range(self.config.get('competing_writer_rechecks',6)):
+            if not active or self.stop.exists():break
+            time.sleep(5);active=competing_processes(self.project)
         if active:raise RuntimeError('Competing writer detected before role start')
         recovery=self.state.get('release_recovery') or {}
         recovering=recovery.get('active') is True

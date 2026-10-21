@@ -419,6 +419,14 @@ class TeamTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'Stop coordinator'):
                 self.controller.retry()
 
+    def test_lingering_worker_does_not_raise_competing_writer(self):
+        seen=[[{'ProcessId':123}],[{'ProcessId':123}],[]]
+        with patch.object(team,'competing_processes',side_effect=seen), patch.object(team.time,'sleep') as nap:
+            self.controller.persist(stage='planner')
+            try:self.controller.execute('planner')
+            except Exception as exc:self.assertNotIn('Competing writer',str(exc))
+        self.assertEqual(nap.call_count,2)
+
     def test_dirty_initialization_requires_explicit_adoption(self):
         self.write('app.txt', 'owner changes')
         with self.assertRaisesRegex(RuntimeError, 'adopt-dirty'):
