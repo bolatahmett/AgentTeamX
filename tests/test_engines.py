@@ -163,6 +163,17 @@ class EngineTests(unittest.TestCase):
         self.assertIn('claude', self.controller.state['engines'])
 
     # ---- Claude command ----
+    def test_qa_may_poll_loopback_but_keeps_git_and_gh_denies(self):
+        def denied(role):
+            a = self.controller.claude_args('claude', role, 'danger-full-access')
+            return a[a.index('--disallowedTools') + 1]
+        qa, dev = denied('qa'), denied('developer')
+        self.assertNotIn('Bash(curl *)', qa)
+        self.assertNotIn('Bash(Invoke-RestMethod *)', qa)
+        self.assertIn('Bash(curl *)', dev)
+        for rule in ('Bash(git push *)', 'Bash(git commit *)', 'Bash(gh *)', 'Bash(ssh *)'):
+            self.assertIn(rule, qa)
+
     def test_claude_commands_follow_each_sandbox(self):
         full = self.controller.claude_args('claude', 'developer', 'danger-full-access')
         self.assertIn('--dangerously-skip-permissions', full)

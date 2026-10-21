@@ -48,6 +48,9 @@ CLAUDE_DENIED = ('Bash(git push *)','Bash(git commit *)','Bash(git reset *)','Ba
 # Owner-authorized 2026-10-20: release diagnosis roles may read GitHub Actions runs and logs.
 # Only `gh run view` / `gh run list` stay reachable, and only in the read-only (dontAsk, allowlist) sandbox. Deny rules beat
 # allow rules, so there the catch-all `gh *` deny is replaced by named denies as defense in depth; every other sandbox keeps `gh *`.
+# QA drives the controller-owned loopback runtime over HTTP, so its readiness poll must not hit the network-client denies.
+# Node can already fetch any URL, so these denies were never an isolation boundary; every other deny stays for QA.
+QA_HTTP_ALLOWED = ('Bash(curl *)','Bash(Invoke-WebRequest *)','Bash(iwr *)','Bash(Invoke-RestMethod *)','Bash(irm *)')
 GH_READ_ROLES = {'technical_lead','devops'}
 GH_READ_ALLOWED = ('Bash(gh run view *)','Bash(gh run list *)')
 GH_DENIED = ('Bash(gh auth *)','Bash(gh api *)','Bash(gh pr *)','Bash(gh repo *)','Bash(gh release *)','Bash(gh secret *)',
@@ -687,6 +690,7 @@ class Team:
         # a name-by-name deny list; full-access and workspace-write roles keep the blanket `gh *` deny.
         gh_read=role in GH_READ_ROLES and sandbox=='read-only'
         denied=','.join([d for d in CLAUDE_DENIED if d!='Bash(gh *)']+list(GH_DENIED) if gh_read else CLAUDE_DENIED)
+        if role=='qa':denied=','.join(d for d in denied.split(',') if d not in QA_HTTP_ALLOWED)
         if sandbox=='danger-full-access':
             args+=['--dangerously-skip-permissions','--tools',CLAUDE_TOOLS,'--disallowedTools',denied]
         elif sandbox=='workspace-write':
