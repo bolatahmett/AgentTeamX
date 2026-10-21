@@ -534,9 +534,28 @@ class TeamTests(unittest.TestCase):
             self.controller.commit(expected, 'Do not commit stale source')
         self.assertEqual(self.git('diff', '--cached', '--binary'), before)
 
-    def test_current_commit_preserves_owner_staged_changes(self):
+    def test_current_commit_accepts_fully_staged_reviewed_changes(self):
         expected = self.approvals()
         self.git('add', 'app.txt')
+        head = self.controller.commit(expected, 'Commit staged reviewed change')
+        self.assertEqual(self.git('rev-parse', 'HEAD').decode().strip(), head)
+        self.assertEqual(self.git('status', '--porcelain'), b'')
+
+    def test_commit_accepts_deletion_already_staged(self):
+        self.write('gone.txt', 'x')
+        self.git('add', 'gone.txt')
+        self.git('commit', '-m', 'add gone')
+        self.git('rm', '-q', 'gone.txt')
+        expected = self.approvals()
+        head = self.controller.commit(expected, 'Commit staged deletion')
+        self.assertEqual(self.git('rev-parse', 'HEAD').decode().strip(), head)
+        self.assertEqual(self.git('status', '--porcelain'), b'')
+
+    def test_current_commit_preserves_partially_staged_changes(self):
+        self.write('app.txt', 'staged version')
+        self.git('add', 'app.txt')
+        self.write('app.txt', 'reviewed worktree version')
+        expected = self.approvals()
         before = self.git('diff', '--cached', '--binary')
         with self.assertRaisesRegex(RuntimeError, 'Index already'):
             self.controller.commit(expected, 'Preserve owner index')

@@ -2168,18 +2168,28 @@ class Team:
         for role in GATES:
             receipt=self.state.get('receipts',{}).get(role,{})
             if not gate_valid(receipt,role,snap):raise RuntimeError('Missing current '+role+' approval')
-        if git(self.project,'diff','--cached','--name-only'):raise RuntimeError('Index already contains changes; preserve and review manually')
         # --no-renames ensures every record is one independently quoted path.
         raw=git(self.project,'-c','status.renames=false','status','--porcelain','-z','--untracked-files=all')
         paths=[p[3:].decode('utf-8') for p in raw.split(b'\0') if p]
+        # Staged content that equals the reviewed working tree is restaged identically; only partial staging is ambiguous.
+        staged={l for l in git(self.project,'diff','--cached','--name-only','-z').split(b'\0') if l}
+        if staged&{l for l in git(self.project,'diff','--name-only','-z').split(b'\0') if l}:raise RuntimeError('Index already contains partially staged changes; preserve and review manually')
         if not paths:raise RuntimeError('No changes to commit')
         for name in paths:
             bits=Path(name).parts
             if any(b.startswith('.env') and b!='.env.example' for b in bits) or Path(name).suffix.lower() in {'.pem','.key','.pfx'}:raise RuntimeError('Sensitive-looking path excluded: '+name)
         if not message.strip() or '\n' in message:raise ValueError('Use one concrete commit subject')
-        git(self.project,'add','--',*paths)
+        # A deletion already staged (status 'D ') is absent from both index and tree; git add rejects such a pathspec.
+        staged_deleted={r[3:].decode('utf-8') for r in raw.split(b'\0') if r[:2]==b'D '}
+        to_add=[n for n in paths if n not in staged_deleted]
+        if to_add:git(self.project,'add','--',*to_add)
         # Detect concurrent source edits after staging before the irreversible local record.
-        if snapshot(self.project)['fingerprint']!=expected:raise RuntimeError('Source changed while staging; commit refused, inspect index')
+        # Staging a deletion drops it from the index listing, so compare content hashes of surviving files only.
+        def content(sn):return sn['head'],{k:v for k,v in sn['files'].items() if v!='deleted'}
+        if content(snapshot(self.project))!=content(snap):
+            # The index was empty before this call, so undo only our own staging to keep a retry possible.
+            git(self.project,'reset','-q','--',*paths)
+            raise RuntimeError('Source changed while staging; commit refused, staging rolled back')
         git(self.project,'commit','-m',message)
         head=git(self.project,'rev-parse','HEAD').decode().strip()
         batch=self.state.get('delivery_batch') or {}
