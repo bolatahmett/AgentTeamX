@@ -1,6 +1,10 @@
 param([switch]$Remove)
 $ErrorActionPreference='Stop'
-$ProjectRoot=Split-Path -Parent $PSScriptRoot
+$TeamConfig = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'team.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($env:AGENT_TEAM_PROJECT) { $ProjectRoot = $env:AGENT_TEAM_PROJECT }
+elseif ($TeamConfig.project) { $ProjectRoot = Join-Path $PSScriptRoot $TeamConfig.project }
+else { $ProjectRoot = Split-Path -Parent $PSScriptRoot }
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $TaskName='AfterDark-Team-Guardian'
 if ($Remove) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue

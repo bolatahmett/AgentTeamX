@@ -144,15 +144,15 @@ return the concrete unresolved condition rather than an indefinite retry loop.
 
 ## Resumable preparation checkpoints
 
-Before rebuilding, run `python agent-team/checkpoint.py inspect prepare` and
-`python agent-team/checkpoint.py inspect build`. These checkpoints bind both
+Before rebuilding, run `python CHECKPOINT_TOOL inspect prepare` and
+`python CHECKPOINT_TOOL inspect build` (CHECKPOINT_TOOL is context.checkpoint_tool). These checkpoints bind both
 application and environment fingerprints and SHA-256 hashes of ignored evidence
 artifacts. Team dashboard/prompt/document edits do not invalidate those scopes.
 A reusable record permits reuse only after verifying the referenced real build
 outputs still exist, their hashes match, dependencies are unchanged and no
 process owns the output directory. Never treat a checkpoint as a QA approval.
 Record each successful preparation/build/browser/cleanup stage immediately with
-`python agent-team/checkpoint.py record STAGE --artifact ABSOLUTE_EVIDENCE_FILE
+`python CHECKPOINT_TOOL record STAGE --artifact ABSOLUTE_EVIDENCE_FILE
 --evidence "Concrete observed result"`. Use multiple --artifact arguments for actual build outputs, BUILD_ID and
 evidence. The checkpoint tool permits files in apps/api/dist,
 packages/contracts/dist and apps/web/.next-verify as well as ignored runtime

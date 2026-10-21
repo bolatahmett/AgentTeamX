@@ -8,7 +8,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$TeamConfig = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'team.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($env:AGENT_TEAM_PROJECT) { $ProjectRoot = $env:AGENT_TEAM_PROJECT }
+elseif ($TeamConfig.project) { $ProjectRoot = Join-Path $PSScriptRoot $TeamConfig.project }
+else { $ProjectRoot = Split-Path -Parent $PSScriptRoot }
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $Controller = Join-Path $PSScriptRoot 'team.py'
 $Runtime = Join-Path $ProjectRoot '.supervisor\team-v2'
 

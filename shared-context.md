@@ -69,7 +69,8 @@ apply. No worker may mutate Git, push, deploy, publish or access production secr
 
 ## Local environment and recovery
 
-The active team lives in agent-team/; Team.cmd opens the guided helper. Runtime
+The active team lives outside the project in its own team home (context.team_home,
+C:/Users/melis/Documents/Projects/AgentTeamX); Team.cmd there opens the guided helper. Runtime
 artifacts, reports and state live under ignored .supervisor/team-v2/. Only the
 controller schedules workers and owns runtime state/STOP/locks. Do not run legacy
 supervisors alongside the centralized team. A stopped or stale state file is not

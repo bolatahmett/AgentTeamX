@@ -23,7 +23,20 @@ from qa_progress import validate_progress
 import unicodedata
 
 HOME = Path(__file__).resolve().parent
-PROJECT = HOME.parent
+
+
+def project_root(home=HOME):
+    """The project this team works on: AGENT_TEAM_PROJECT, else team.json "project" (relative to the team home)."""
+    configured=os.environ.get('AGENT_TEAM_PROJECT')
+    if not configured:
+        try:configured=json.loads((Path(home)/'team.json').read_text(encoding='utf-8-sig')).get('project')
+        except (OSError,ValueError):configured=None
+    return (Path(home)/configured).resolve() if configured else Path(home).parent
+
+
+PROJECT = project_root()
+# Live controllers are recognized by this exact script path, wherever the team home lives.
+CONTROLLER = str(HOME/'team.py').replace('\\','/').lower()
 ROW = re.compile(r'^- \[([ xX])\] \*\*(T\d+[A-Z]?)\s.*?\*\*\s*\|\s*(todo|in_progress|blocked|done)\s*\|\s*[^|:\r\n]+:\s*([^.|\r\n]+)', re.M)
 ROLES = {'planner','developer','ux_reviewer','code_reviewer','qa','devops','operations','environment_engineer','technical_lead'}
 CAPABILITIES = {'browser','local_runtime','build_tools'}
@@ -381,7 +394,8 @@ def competing_processes(project, inventory=None):
         name=(row.get('Name') or '').lower()
         if row['ProcessId']==os.getpid() or name not in {'python.exe','pythonw.exe','python3.exe','codex.exe','node.exe','claude.exe','claude'}:continue
         old=('plannersupervisior/planner.py' in cmd or 'codex-supervisor-windows/supervisor.py' in cmd)
-        current=('agent-team/team.py' in cmd and re.search(r'\b(start|run-once|initialize|commit|publish|retry|next|recover)\b',cmd))
+        # A controller from the former in-project agent-team/ location still counts as a competing writer.
+        current=((CONTROLLER in cmd or 'agent-team/team.py' in cmd) and re.search(r'\b(start|run-once|initialize|commit|publish|retry|next|recover)\b',cmd))
         worker=(str(project).replace('\\','/').lower() in cmd and (' exec ' in cmd or ' exec-server ' in cmd) and 'exec-server' not in cmd)
         # Claude workers are launched with --add-dir <project> and stream-json so they are identifiable.
         claude_worker=(str(project).replace('\\','/').lower() in cmd and '--add-dir' in cmd and 'stream-json' in cmd and ' -p' in cmd)
@@ -463,7 +477,7 @@ class Team:
         alive=False
         if record:
             try:
-                alive=any(r['ProcessId']==record.get('pid') and 'agent-team/team.py' in (r.get('CommandLine') or '').replace('\\','/').lower() for r in process_inventory(self.project))
+                alive=any(r['ProcessId']==record.get('pid') and CONTROLLER in (r.get('CommandLine') or '').replace('\\','/').lower() for r in process_inventory(self.project))
             except Exception:alive=None
         health=load(self.folder/'health.json',{}) or self.state.get('health')
         return {**self.state,'health':health,'guardian':load(self.folder/'guardian.json',{}),'heartbeat':load(self.folder/'heartbeat.json',{}),'controller_status':self.state.get('controller_status') if alive else 'not_running','stop_requested':self.stop.exists(),'lock':record,'controller_alive':alive,'pending_inputs':len(self.inputs())}
@@ -542,6 +556,7 @@ class Team:
                 'scope_fingerprints':self.state.get('scope_fingerprints',{}),
                 'checkpoint_directory':str(self.folder/'checkpoints'),
                 'checkpoint_tool':str(self.home/'checkpoint.py'),
+                'team_home':str(self.home),
                 'release_observation':str(self.folder/'release-observation.json'),
                 'attention_kind':self.state.get('attention_kind'),
                 'qa_owns_environment':self.config.get('qa_owns_environment',False),
@@ -683,6 +698,8 @@ class Team:
         args=[binary,'-p','--output-format','stream-json','--verbose','--json-schema',schema,
               '--model',policy['model'],'--effort',policy['reasoning_effort'],
               '--no-session-persistence','--add-dir',str(self.project),
+              # The coordinator repairs team machinery, which lives outside the project.
+              *(['--add-dir',str(self.home)] if role=='technical_lead' else []),
               # No --mcp-config: drops claude.ai connectors and user MCP servers, which --tools does not restrict.
               '--strict-mcp-config']
         # Deny rules win over allow rules and over bypass mode, so every sandbox keeps them.

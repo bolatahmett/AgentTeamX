@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "project": "../AfterDark",
   "poll_seconds": 15,
   "worker_timeout_seconds": 1200,
   "terminal_grace_seconds": 10,

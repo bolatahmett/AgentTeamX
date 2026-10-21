@@ -1,5 +1,6 @@
 """Resilience contracts with fixtures only; no agents, GitHub or production calls."""
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -181,6 +182,20 @@ class ResilienceTests(unittest.TestCase):
     def test_windowless_controller_is_a_competing_writer(self):
         inventory=[{'ProcessId':987654,'Name':'pythonw.exe','CommandLine':'pythonw.exe C:/project/agent-team/team.py start --resume'}]
         self.assertEqual(len(team.competing_processes(Path('C:/project'),inventory)),1)
+
+    def test_controller_from_team_home_is_a_competing_writer(self):
+        inventory=[{'ProcessId':987654,'Name':'pythonw.exe','CommandLine':'pythonw.exe '+str(team.HOME/'team.py')+' start --resume'}]
+        self.assertEqual(len(team.competing_processes(Path('C:/project'),inventory)),1)
+
+    def test_project_root_comes_from_team_json(self):
+        with tempfile.TemporaryDirectory() as root:
+            home=Path(root)/'Team';home.mkdir()
+            (home/'team.json').write_text('{"project": "../Product"}',encoding='utf-8')
+            with patch.dict(os.environ,{},clear=False):
+                os.environ.pop('AGENT_TEAM_PROJECT',None)
+                self.assertEqual(team.project_root(home),(Path(root)/'Product').resolve())
+                os.environ['AGENT_TEAM_PROJECT']=str(Path(root)/'Other')
+                self.assertEqual(team.project_root(home),(Path(root)/'Other').resolve())
 
     def test_failures_have_distinct_recovery_categories(self):
         for text,kind in [('QUOTA_LIMIT','quota'),('permission denied','policy'),('Role deadline exceeded','timeout'),('Git timed out after -330 seconds','timeout'),('CLI failed','transport'),('cleanup failed','cleanup'),('build failed','build'),('Invalid report','validation')]:

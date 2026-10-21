@@ -127,7 +127,7 @@ def collect(project, state, now=None):
         if not isinstance(receipt,dict) or not isinstance(receipt.get('report'),dict):continue
         reports.append({**receipt,'role':role,'file':str(path.relative_to(project))})
     reports.sort(key=lambda r:r.get('recorded_at',''),reverse=True)
-    config=read_json(project/'agent-team/team.json',{}) or {}
+    config=read_json(Path(__file__).resolve().parent/'team.json',{}) or {}
     return {'state':state,'now':now.isoformat(timespec='seconds'),'started_at':started,
             'elapsed_seconds':seconds_since(started,now),'last_activity_seconds':last_activity,
             'actions':active,'reports':reports,'events':events[-8:],'role_counts':counts,'role_seconds':spent,
@@ -342,7 +342,7 @@ def collect_rich(project, state, now=None):
     models={}
     for e in events:
         if e.get('event')=='worker_model_selected':models[e.get('role')]={**(e.get('policy') or {}),'engine':e.get('engine')}
-    config=read_json(project/'agent-team/team.json',{}) or {}
+    config=read_json(Path(__file__).resolve().parent/'team.json',{}) or {}
     batch=state.get('delivery_batch') or {}
     mission=str(config.get('delivery_epoch','legacy'))+':'+str(batch.get('id') or state.get('task') or 'untasked@'+str(state.get('commit') or 'none')[:12])
     now_ts=time.time()

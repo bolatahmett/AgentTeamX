@@ -6,6 +6,14 @@ planner/supervisor implementations remain inactive references; do not run them
 alongside this controller. Runtime evidence and controls belong to the controller's
 ignored runtime directory, not to application source.
 
+## Location and target project - 2026-10-21
+
+The team lives in its own repository (this folder) and works on the project named by
+`"project"` in team.json, resolved relative to this folder (`../AfterDark`). The
+`AGENT_TEAM_PROJECT` environment variable overrides it. Runtime state stays in the
+project's `.supervisor/team-v2/`. Run `Team.cmd` here, or `python team.py <command>`
+from any directory. Commands below written as `agent-team/...` refer to this folder.
+
 ## Roles and boundaries
 
 | Role | Responsibility | Writes |

@@ -80,7 +80,7 @@ and the reports it references. Look for repeated attention incidents, no-change 
 rejected turns, long waits, parked tasks, discovery passes that found nothing, and any
 path that still waited for the owner. Pick the one or two causes that waste the most
 time or calls and fix them at the source: controller code with a mocked unit test under
-agent-team/tests (run the suite), a role prompt, team.json, the QA harness, or a
+tests/ in context.team_home (run the suite there), a role prompt, team.json, the QA harness, or a
 bounded new row in tasks.md for product work. Keep every security, acceptance, STOP,
 Git and publication rule; do not raise limits instead of fixing a cause. If nothing is
 worth changing, say why with the numbers you observed. Write the intervention result
