@@ -219,6 +219,13 @@ class TeamTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.reopen('T2')
 
+    def test_released_acceptance_task_stays_schedulable_for_qa(self):
+        self.write('tasks.md', '- [ ] **T1 Verify** | in_progress | Dependencies: None.\n'
+                   '- [ ] **T2 Next** | in_progress | Dependencies: None.\n')
+        self.controller.config['qa_acceptance_tasks'] = ['T1']
+        self.controller.persist(released_tasks=['T1', 'T2'])
+        self.assertEqual(self.controller.schedulable(['T1', 'T2']), ['T1'])
+
     def test_exhausted_delivery_parks_the_task_and_moves_on(self):
         self.write('tasks.md', '- [ ] **T1 Work** | todo | Dependencies: None.\n'
                    '- [ ] **T2 Next** | todo | Dependencies: None.\n')

@@ -1691,7 +1691,9 @@ class Team:
             for t in due:parked.pop(t)
             self.persist(parked_tasks=parked)
             self.event('parked_tasks_retried',tasks=due)
-        return [t for t in ready if t not in released and t not in parked]
+        # Owner-selected (2026-10-21): released rows still awaiting browser acceptance go to QA, not the developer.
+        accept=set(self.config.get('qa_acceptance_tasks',[]))
+        return [t for t in ready if (t not in released or t in accept) and t not in parked]
 
     def retry_parked_release(self):
         """A parked release-recovery incident is retried once due while the exact published commit still shows a failure."""
