@@ -363,6 +363,15 @@ class ControllerFastPathTests(unittest.TestCase):
         self.assertEqual(self.roles, [])
         self.assertEqual(self.controller.state['qa_fast_path']['tier'], 1)
 
+    def test_uncommitted_ui_change_gets_the_controller_runtime(self):
+        self.run_chain()
+        cfg = self.controller.qa_tiers_config()
+        self.controller.persist(task='T1')
+        self.write('app.txt', 'backend only change\n')
+        self.assertFalse(self.controller.uncommitted_ui_change(cfg))
+        self.write('apps/web/page.txt', 'ui changed\n')
+        self.assertTrue(self.controller.uncommitted_ui_change(cfg))
+
     def test_source_only_failure_requests_developer_repair_without_a_qa_turn(self):
         self.source_only()
         self.run_chain()

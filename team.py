@@ -1076,7 +1076,18 @@ class Team:
         if not cfg or cfg.get('mode')=='source_only':return False
         progress=self.matching_qa_progress()
         return bool(self.state.get('task') in self.config.get('qa_acceptance_tasks',[]) or
-                    (self.state.get('delivery_batch') or {}).get('acceptance_tasks') or (progress and progress.get('remaining')))
+                    (self.state.get('delivery_batch') or {}).get('acceptance_tasks') or (progress and progress.get('remaining')) or
+                    self.uncommitted_ui_change(cfg))
+
+    def uncommitted_ui_change(self,cfg):
+        """A task with uncommitted UI-path edits needs browser acceptance, so QA must get the controller-owned runtime
+        instead of bootstrapping one itself (a QA-side readiness poll is denied by the permission layer)."""
+        if not self.state.get('task'):return False
+        prefixes=[str(x) for x in (cfg.get('ui_paths') or ['apps/web/'])]
+        try:
+            out=subprocess.run(['git','status','--porcelain'],cwd=str(self.project),capture_output=True,text=True,encoding='utf-8',timeout=30).stdout
+        except (OSError,subprocess.SubprocessError):return False
+        return any(line[3:].strip().strip('"').replace(chr(92),'/').startswith(tuple(prefixes)) for line in out.splitlines() if len(line)>3)
 
     def run_worker_engines(self,role):
         if not self.engine_failover_enabled():return self.run_worker_engine(role,'codex')
