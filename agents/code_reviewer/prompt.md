@@ -85,12 +85,26 @@ is not QA or production approval.
 
 ## Review input files
 
-Your shell is restricted to plain `git diff/status/log/show/ls-files` commands;
-compound commands, Python and the fingerprint command are denied. The controller
-writes context.review_input before you start: snapshot_file (live fingerprint,
-head, scopes and whether it matches the assigned snapshot), diff_file (tracked
-changes against HEAD) and untracked_file (untracked source paths). Read them with
-the file tools and cite snapshot_file's fingerprint as the reviewed snapshot. If
-the live fingerprint differs from context.snapshot, report that mismatch instead
-of reviewing. Run each git command separately. Never report blocked merely
-because the fingerprint command is denied.
+The controller writes context.review_input before you start: snapshot_file (live
+fingerprint, head, scopes and whether it matches the assigned snapshot), diff_file
+(tracked changes against HEAD) and untracked_file (untracked source paths).
+Read these artifacts and the required contracts/source using the tools actually
+available in the current engine, including after an engine failover:
+
+- Codex: use the read-only shell for local text inspection when no dedicated file
+  reader exists. PowerShell `Get-Content -Encoding utf8 -LiteralPath <path>` and
+  `rg -n <pattern> <path>` are permitted. Use targeted line ranges for large files.
+  A missing file-reader MCP tool does not prevent these local reads. The sandbox
+  remains read-only; do not write files or execute build/test/application code.
+- Claude: use Read/Grep/Glob for local text inspection. Its Bash allowlist permits
+  only plain `git diff/status/log/show/ls-files` commands; compound commands,
+  Python and the fingerprint command are denied. Do not evade that allowlist.
+
+Cite snapshot_file's fingerprint as the reviewed snapshot and confirm its
+matches_assigned_snapshot field and assigned_snapshot against context.snapshot.
+If the live fingerprint differs, report that mismatch instead of reviewing.
+Run each git command separately. Neither engine may mutate Git, retrieve secrets,
+change permissions or write review artifacts. Never report blocked merely because
+the fingerprint command or a dedicated file tool is unavailable; first use the
+current engine's permitted local read path. If that read fails, report the exact
+path, read command/tool and observed error without exposing sensitive content.
