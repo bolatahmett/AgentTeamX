@@ -139,7 +139,9 @@ def run():
                     c.complete_release()
                 elif s['stage'] not in {'needs_attention','waiting_for_quota','ready_for_commit','release_ready','uninitialized'}:
                     restarts=[t for t in restarts if now-t<3600]
-                    if s.get('controller_status')=='running' and not observed_exit:restarts.append(now)
+                    if s.get('controller_status')=='running' and not observed_exit:
+                        # A dead controller leaves controller_status running; count that crash once, not every poll.
+                        restarts.append(now);c.persist(controller_status='crashed')
                     if len(restarts)>=3:
                         c.persist(stage='needs_attention',resume_role=s.get('active_role') or s['stage'],reason='Controller crash budget exhausted',attention_kind='controller_crash')
                     else:

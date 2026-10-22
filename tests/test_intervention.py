@@ -289,6 +289,20 @@ class InterventionTests(unittest.TestCase):
         self.assertNotEqual(c.state['stage'],'technical_lead')
         self.assertEqual(self.roles.count('technical_lead'),before)
 
+    def test_repeated_parked_incident_suppression_logs_once(self):
+        c=self.stalled()
+        c.persist(task=None,delivery_batch=None)
+        stall=dict(stage='needs_attention',resume_role='qa',attention_kind='acceptance_blocked',
+                   reason='Product-wide acceptance block',intervention=None)
+        c.persist(**stall);c.step()
+        incident=c.state['intervention']['incident']
+        c.persist(parked_tasks={'incident:'+incident:{'at':'x','retry_at':time.time()+3600,'reason':'r'}})
+        for _ in range(3):
+            c.persist(intervention=None,**{k:v for k,v in stall.items() if k!='intervention'})
+            c.schedule_intervention()
+        events=(c.folder/'events.jsonl').read_text(encoding='utf-8')
+        self.assertEqual(events.count('parked_incident_suppressed'),1)
+
     def test_invalid_result_reruns_are_counted_and_park_work(self):
         c=self.stalled()
         c.config['max_interventions_per_incident']=2

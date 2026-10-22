@@ -115,12 +115,13 @@ def save(path, value):
         tmp.write_text(json.dumps(value,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
         # Readers/antivirus can briefly hold a Windows destination without delete
         # sharing. Retry the same complete payload; never expose partial JSON.
-        for attempt in range(45):
+        # About 35 seconds in total: a reader holding the file longer than a poll must not crash the controller.
+        for attempt in range(150):
             try:
                 os.replace(tmp,path)
                 return
             except PermissionError:
-                if attempt==44:raise
+                if attempt==149:raise
                 time.sleep(min(.02*2**attempt,.25))
     finally:
         try:tmp.unlink(missing_ok=True)
@@ -1570,9 +1571,10 @@ class Team:
         if (not intervention.get('started') and isinstance(parked_entry,dict) and
                 time.time()<parked_entry.get('retry_at',0)):
             # A parked taskless incident stays suppressed until its retry_at: no new coordinator run.
-            self.persist(stage='schedule',attention_kind=None,failure_kind=None,intervention=None,
+            repeated=self.state.get('suppressed_incident')==incident
+            self.persist(stage='schedule',attention_kind=None,failure_kind=None,intervention=None,suppressed_incident=incident,
                          reason='Incident is parked until its retry time; continuing other work')
-            self.event('parked_incident_suppressed',incident=incident,retry_at=parked_entry.get('retry_at'))
+            if not repeated:self.event('parked_incident_suppressed',incident=incident,retry_at=parked_entry.get('retry_at'))
             return True
         attempts=dict(self.state.get('incident_attempts',{}))
         seen=dict(self.state.get('incident_attempt_at',{}))
