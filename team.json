@@ -35,6 +35,8 @@
   "worker_inactivity_seconds": 600,
   "qa_owns_environment": true,
   "max_calls_per_delivery": 40,
+  "archive_done_tasks": true,
+  "archive_keep_log_entries": 8,
   "park_exhausted_tasks": true,
   "delivery_epoch": "focused-delivery-2026-10-18",
   "max_calls_per_release_recovery": 40,
@@ -46,25 +48,48 @@
   },
   "claude_binary": "claude",
   "claude_models": {
-    "default": {"model": "claude-sonnet-5-5"}
+    "default": {
+      "model": "claude-sonnet-5-5"
+    }
   },
   "claude_quota_cooldown_seconds": 1800,
   "codex_probe_seconds": 300,
   "task_brief_limit_chars": 40000,
   "qa_tiers": {
     "enabled": true,
-    "ui_paths": ["apps/web/"],
+    "ui_paths": [
+      "apps/web/"
+    ],
     "suites": true,
     "check_timeout_seconds": 900,
-    "shell": ["powershell", "-NoProfile", "-NonInteractive", "-Command"],
+    "shell": [
+      "powershell",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command"
+    ],
     "source_checks": [
-      {"id": "typecheck", "command": ". ./scripts/use-dev-tools.ps1; pnpm typecheck"},
-      {"id": "lint", "command": ". ./scripts/use-dev-tools.ps1; pnpm lint"},
-      {"id": "test", "command": ". ./scripts/use-dev-tools.ps1; pnpm test"}
+      {
+        "id": "typecheck",
+        "command": ". ./scripts/use-dev-tools.ps1; pnpm typecheck"
+      },
+      {
+        "id": "lint",
+        "command": ". ./scripts/use-dev-tools.ps1; pnpm lint"
+      },
+      {
+        "id": "test",
+        "command": ". ./scripts/use-dev-tools.ps1; pnpm test"
+      }
     ],
     "preflight": {
-      "tools": ["git"],
-      "files": ["scripts/use-dev-tools.ps1", "%APPDATA%/npm/corepack.cmd"],
+      "tools": [
+        "git"
+      ],
+      "files": [
+        "scripts/use-dev-tools.ps1",
+        "%APPDATA%/npm/corepack.cmd"
+      ],
       "browser_paths": [
         "C:/Program Files/Google/Chrome/Application/chrome.exe",
         "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
@@ -73,33 +98,116 @@
         "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
         ".tools/qa-browser"
       ],
-      "ports_free": [3443]
+      "ports_free": [
+        3443
+      ]
     }
   },
   "shared_context_sections": {
-    "Product and identity": ["planner", "developer", "code_reviewer", "qa", "ux_reviewer", "technical_lead"],
-    "Work and evidence": ["planner", "developer", "code_reviewer", "qa", "ux_reviewer", "devops", "technical_lead", "environment_engineer"],
-    "Local environment and recovery": ["developer", "qa", "ux_reviewer", "environment_engineer", "technical_lead"],
-    "Local authority and current diagnostics": ["developer", "qa", "environment_engineer", "technical_lead"],
-    "Authorized delivery and resilience update": ["planner", "qa", "devops", "operations", "technical_lead"],
-    "Owner-authorized autonomous intervention": ["technical_lead"]
+    "Product and identity": [
+      "planner",
+      "developer",
+      "code_reviewer",
+      "qa",
+      "ux_reviewer",
+      "technical_lead"
+    ],
+    "Work and evidence": [
+      "planner",
+      "developer",
+      "code_reviewer",
+      "qa",
+      "ux_reviewer",
+      "devops",
+      "technical_lead",
+      "environment_engineer"
+    ],
+    "Local environment and recovery": [
+      "developer",
+      "qa",
+      "ux_reviewer",
+      "environment_engineer",
+      "technical_lead"
+    ],
+    "Local authority and current diagnostics": [
+      "developer",
+      "qa",
+      "environment_engineer",
+      "technical_lead"
+    ],
+    "Authorized delivery and resilience update": [
+      "planner",
+      "qa",
+      "devops",
+      "operations",
+      "technical_lead"
+    ],
+    "Owner-authorized autonomous intervention": [
+      "technical_lead"
+    ]
   },
   "role_models": {
-    "operations": {"model": "gpt-6-luna", "reasoning_effort": "low"},
-    "devops": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
-    "planner": {"model": "gpt-6-sol", "reasoning_effort": "low"},
-    "ux_reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-    "qa": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-    "environment_engineer": {"model": "gpt-6-sol", "reasoning_effort": "medium"},
-    "developer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-    "code_reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-    "technical_lead": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+    "operations": {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low"
+    },
+    "devops": {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium"
+    },
+    "planner": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "low"
+    },
+    "ux_reviewer": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium"
+    },
+    "qa": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium"
+    },
+    "environment_engineer": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "medium"
+    },
+    "developer": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium"
+    },
+    "code_reviewer": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium"
+    },
+    "technical_lead": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium"
+    }
   },
-  "release_diagnostic_model": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "qa_acceptance_tasks": ["T103A", "T103B", "T103C", "T103D", "T103"],
+  "release_diagnostic_model": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium"
+  },
+  "qa_acceptance_tasks": [
+    "T103A",
+    "T103B",
+    "T103C",
+    "T103D",
+    "T103",
+    "T138"
+  ],
   "auto_batch_size": 1,
-  "autonomous_discovery": {"enabled": true, "qa_exploration": true, "interval_minutes": 60, "max_interval_hours": 24},
-  "self_improvement": {"enabled": true, "interval_hours": 12, "min_new_events": 30},
+  "autonomous_discovery": {
+    "enabled": true,
+    "qa_exploration": true,
+    "interval_minutes": 60,
+    "max_interval_hours": 24
+  },
+  "self_improvement": {
+    "enabled": true,
+    "interval_hours": 12,
+    "min_new_events": 30
+  },
   "park_external_blockers": true,
   "park_retry_hours": 12,
   "max_interventions_per_incident": 3,

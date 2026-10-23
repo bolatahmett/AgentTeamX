@@ -68,6 +68,7 @@ class TeamTests(unittest.TestCase):
         config['qa_tiers'] = {'enabled': False}
         config['autonomous_intervention'] = False
         config['max_calls_per_delivery'] = 1000
+        config['archive_done_tasks'] = False
         team.save(self.home / 'team.json', config)
         self.write('.gitignore', '.supervisor/\n')
         self.write('tasks.md', '- [ ] **T1 Work** | todo | Dependencies: None.\n')
@@ -338,6 +339,44 @@ class TeamTests(unittest.TestCase):
         self.write('tasks.md', '- [x] **T1 - Done** | done | Dependencies: None.\n')
         self.assertFalse(team.close_task_row(self.project, 'T1', 'note'))
         self.assertFalse(team.close_task_row(self.project, 'T9', 'note'))
+
+    def test_archive_moves_closed_rows_and_keeps_needed_stubs(self):
+        self.write('tasks.md', '# Backlog\n\n## Queue\n\n'
+                               '- [x] **T1 - Base** | done | Dependencies: None.\n  Scope: base.\n  Completed: evidence.\n\n'
+                               '- [x] **T2 - Unused** | done | Dependencies: T1.\n  Scope: unused.\n\n'
+                               '- [ ] **T3 - Next** | todo | Dependencies: T1,T9.\n  Scope: next.\n\n'
+                               '## Archived dependency references\n\nOld prose.\n\n'
+                               '- [x] **T8 - Gone** | done | Dependencies: None.\n  Archived earlier.\n'
+                               '- [x] **T9 - Old** | done | Dependencies: None.\n  Archived earlier.\n\n'
+                               '## Work log\n\n### 2026-01-01 - one\n\n- a\n\n### 2026-01-02 - two\n\n- b\n')
+        self.assertEqual(team.archive_done_rows(self.project, keep_log=1), ['T1', 'T2'])
+        text = (self.project / 'tasks.md').read_text(encoding='utf-8')
+        archive = (self.project / team.TASK_ARCHIVE).read_text(encoding='utf-8')
+        self.assertIn('- [x] **T1 - Base** | done | Dependencies: None.\n  Archived ', text)
+        self.assertNotIn('Completed: evidence', text)
+        self.assertNotIn('T2 - Unused', text)
+        self.assertNotIn('T8 - Gone', text)
+        self.assertIn('- [x] **T9 - Old** | done | Dependencies: None.\n  Archived earlier.', text)
+        self.assertIn('- [ ] **T3 - Next** | todo | Dependencies: T1,T9.\n  Scope: next.', text)
+        self.assertIn('### 2026-01-02 - two', text)
+        self.assertNotIn('2026-01-01 - one', text)
+        for part in ('Completed: evidence', '**T2 - Unused** | done | Dependencies: T1.', '### 2026-01-01 - one'):
+            self.assertIn(part, archive)
+        self.assertEqual(sorted(r['id'] for r in team.backlog(self.project)[0]), ['T1', 'T3', 'T9'])
+        self.assertEqual(team.archive_done_rows(self.project, keep_log=1), [])
+        self.assertEqual((self.project / 'tasks.md').read_text(encoding='utf-8'), text)
+
+    def test_schedule_archives_closed_rows_when_enabled(self):
+        self.write('tasks.md', '- [x] **T1 - Done** | done | Dependencies: None.\n  Completed.\n\n'
+                               '- [ ] **T2 - Work** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Rows')
+        self.controller.config['archive_done_tasks'] = True
+        self.effects['developer'] = lambda: self.write('app.txt', 'T2 change\n')
+        self.controller.initialize()
+        self.controller.step()
+        self.assertNotIn('T1 - Done', (self.project / 'tasks.md').read_text(encoding='utf-8'))
+        self.assertIn('T1 - Done', (self.project / team.TASK_ARCHIVE).read_text(encoding='utf-8'))
+        self.assertEqual(self.controller.state['task'], 'T2')
 
     def test_planner_routing_after_release_happens_only_once(self):
         self.released_open_task()

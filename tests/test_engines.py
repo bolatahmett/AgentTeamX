@@ -30,7 +30,8 @@ class EngineTests(unittest.TestCase):
         config = json.loads((source / 'team.json').read_text(encoding='utf-8-sig'))
         self.owner_role_engines = config.get('role_engines', {})
         # Routing tests below assume the Codex-primary default; the owner's split is checked separately.
-        config.update(auto_commit=False, qa_owns_environment=False, qa_tiers={'enabled': False}, autonomous_intervention=False, role_engines={})
+        config.update(auto_commit=False, qa_owns_environment=False, qa_tiers={'enabled': False}, autonomous_intervention=False, role_engines={},
+                      archive_done_tasks=False)
         team.save(self.home / 'team.json', config)
         (self.home / 'report.schema.json').write_text((source / 'report.schema.json').read_text(encoding='utf-8'), encoding='utf-8')
         (self.project / '.gitignore').write_text('.supervisor/\n', encoding='utf-8')
@@ -349,6 +350,18 @@ class EngineTests(unittest.TestCase):
             self.controller.resume_quota()
         self.assertNotEqual(self.controller.state['stage'], 'waiting_for_quota')
 
+
+    def test_repeated_claude_quota_exhaustion_doubles_cooldown_up_to_the_cap(self):
+        self.controller.mark_engine('claude', True)
+        first = self.controller.state['engines']['claude']['retry_after'] - time.time()
+        self.controller.mark_engine('claude', True)
+        second = self.controller.state['engines']['claude']['retry_after'] - time.time()
+        self.assertEqual(self.controller.state['engines']['claude']['strikes'], 2)
+        self.assertGreater(second, first * 1.9)
+        for _ in range(6):
+            self.controller.mark_engine('claude', True)
+        capped = self.controller.state['engines']['claude']['retry_after'] - time.time()
+        self.assertLessEqual(capped, 14400 + 5)
 
 if __name__ == '__main__':
     unittest.main()

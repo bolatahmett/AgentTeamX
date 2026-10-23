@@ -98,7 +98,7 @@ class RoleContextTests(unittest.TestCase):
         self.home.mkdir()
         source = Path(team.__file__).parent
         self.config = json.loads((source / 'team.json').read_text(encoding='utf-8-sig'))
-        self.config.update(auto_commit=False, autonomous_intervention=False)
+        self.config.update(auto_commit=False, autonomous_intervention=False, archive_done_tasks=False)
         team.save(self.home / 'team.json', self.config)
         (self.home / 'report.schema.json').write_text((source / 'report.schema.json').read_text(encoding='utf-8'), encoding='utf-8')
         (self.project / '.gitignore').write_text('.supervisor/\n', encoding='utf-8')

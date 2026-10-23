@@ -237,6 +237,79 @@ def close_task_row(project, task, note):
     return True
 
 
+TASK_ARCHIVE = 'docs/history/tasks-archive.md'
+DONE_ROW = re.compile(r'^- \[[xX]\] (\*\*(T\d+[A-Z]?)\b.*?\*\*\s*\|\s*done\s*\|)')
+STUB_SECTION = '## Archived dependency references'
+
+
+def archive_done_rows(project, keep_log=8):
+    """Owner-selected (2026-10-23): move closed rows out of tasks.md so every reader pays only for open work.
+
+    Full rows and older work-log entries go to TASK_ARCHIVE (under docs/, so no QA scope changes). A closed row
+    that an open row still depends on stays as a one-line stub in STUB_SECTION so backlog() resolves it; stubs
+    nothing depends on any more are dropped. Returns the IDs moved; writes nothing when there is nothing to move."""
+    path=project/'tasks.md'
+    lines=path.read_text(encoding='utf-8-sig').replace('\r\n','\n').split('\n')
+    text='\n'.join(lines)
+    open_deps={d for c,i,s,dep in ROW.findall(text) if c==' ' for d in re.findall(r'T\d+[A-Z]?',dep)}
+    keep,moved,stubs,log=[],[],{},[]
+    section=None;i=0
+    while i<len(lines):
+        line=lines[i]
+        if line.startswith('## '):section=line
+        match=DONE_ROW.match(line)
+        if not match:
+            if section=='## Work log' and line.startswith('### '):
+                end=i+1
+                while end<len(lines) and not lines[end].startswith(('### ','## ')):end+=1
+                log.append(lines[i:end]);i=end;continue
+            # Prose of the two controller-maintained sections is regenerated below.
+            if section not in (STUB_SECTION,'## Work log'):keep.append(line)
+            i+=1;continue
+        end=i+1
+        while end<len(lines) and lines[end].startswith('  '):end+=1
+        block=lines[i:end];tid=match.group(2)
+        if end<len(lines) and not lines[end].strip():end+=1
+        if section==STUB_SECTION:
+            if tid in open_deps:stubs[tid]=block
+        else:
+            moved.append((tid,block))
+            if tid in open_deps:stubs[tid]=[match.group(0)+' Dependencies: None.','  Archived '+stamp()[:10]+'; full row in '+TASK_ARCHIVE+'.']
+        i=end
+    old_log,log=log[:-keep_log],log[-keep_log:]
+    # Rebuild: stubs go under STUB_SECTION, then the kept work-log entries; both sections are regenerated.
+    body=[l for l in keep if l not in (STUB_SECTION,'## Work log')]
+    while body and not body[-1].strip():body.pop()
+    out=body+['',STUB_SECTION,'','Full rows are in ['+TASK_ARCHIVE.split('/')[-1]+']('+TASK_ARCHIVE+'). These stubs keep open',
+              'dependencies resolvable; the controller adds and drops them.','']
+    for tid in sorted(stubs,key=lambda t:(int(re.match(r'T(\d+)',t).group(1)),t)):out+=stubs[tid]
+    out+=['','## Work log','','Older entries are in ['+TASK_ARCHIVE.split('/')[-1]+']('+TASK_ARCHIVE+'). Add new dated entries below.','']
+    for entry in log:
+        while entry and not entry[-1].strip():entry=entry[:-1]
+        out+=entry+['']
+    new_text='\n'.join(out).rstrip('\n')+'\n'
+    if new_text==text.rstrip('\n')+'\n':return []
+    remaining={i:(c,d) for c,i,s,d in ROW.findall(new_text)}
+    missing=sorted({d for c,dep in remaining.values() if c==' ' for d in re.findall(r'T\d+[A-Z]?',dep)}-set(remaining))
+    if missing:raise ValueError('Archiving would orphan dependencies: '+', '.join(missing))
+    archive=project/TASK_ARCHIVE
+    previous=archive.read_text(encoding='utf-8-sig') if archive.is_file() else (
+        '# Closed task archive\n\nClosed rows and older work-log entries moved out of tasks.md by the controller.\n')
+    added=[]
+    if moved:added+=['','## Rows archived '+stamp()[:10],'']+[l for _,b in moved for l in b+['']]
+    if old_log:added+=['','## Work log archived '+stamp()[:10],'']+[l for e in old_log for l in e]
+    for target,content in ((archive,previous.rstrip('\n')+'\n'+'\n'.join(added).rstrip('\n')+'\n' if added else None),(path,new_text)):
+        if content is None:continue
+        target.parent.mkdir(parents=True,exist_ok=True)
+        tmp=target.with_name(target.name+'.'+uuid.uuid4().hex+'.tmp')
+        try:
+            tmp.write_text(content,encoding='utf-8');os.replace(tmp,target)
+        finally:
+            try:tmp.unlink(missing_ok=True)
+            except OSError:pass
+    return [tid for tid,_ in moved]
+
+
 def task_brief(project, ids, limit=40000, row_cap=14000):
     """Controller-written excerpt of tasks.md for one worker turn.
 
@@ -690,6 +763,12 @@ class Team:
     def engine_failover_enabled(self):
         return bool(self.config.get('engine_failover'))
 
+    def allowed_engines(self):
+        """Engines the owner allows; team.json 'engines' narrows the Codex+Claude pair (owner 2026-10-23: Claude only)."""
+        chosen=self.config.get('engines') or list(ENGINES)
+        if not isinstance(chosen,list) or any(e not in ENGINES for e in chosen):raise ValueError('Invalid engines setting')
+        return [e for e in ENGINES if e in chosen]
+
     def engine_binary(self,engine):
         if engine not in ENGINES:raise ValueError('Unknown engine')
         return shutil.which(self.config.get('claude_binary','claude') if engine=='claude' else self.config['codex'])
@@ -739,7 +818,16 @@ class Team:
         engines=dict(self.state.get('engines',{}))
         if exhausted:
             wait=self.config.get('claude_quota_cooldown_seconds',1800) if engine=='claude' else self.config.get('codex_probe_seconds',300)
-            engines[engine]={'exhausted_at':stamp(),'retry_after':time.time()+wait}
+            now=time.time();strikes=1
+            prior=engines.get(engine) or {}
+            if engine=='claude' and now-prior.get('marked_at',0)<self.config.get('claude_quota_strike_window_seconds',21600):
+                # Retrospective 2026-10-23: a fixed 30-minute cooldown let QA rebuild its runtime five times against a still-limited account.
+                strikes=int(prior.get('strikes',1))+1
+                wait=min(wait*2**(strikes-1),self.config.get('claude_quota_max_cooldown_seconds',14400))
+            resets=getattr(self,'quota_resets_at',None) if engine=='claude' else None
+            self.quota_resets_at=None
+            if resets and resets>now:wait=resets-now+60
+            engines[engine]={'exhausted_at':stamp(),'retry_after':now+wait,'marked_at':now,'strikes':strikes}
         else:engines.pop(engine,None)
         self.persist(engines=engines)
 
@@ -763,11 +851,12 @@ class Team:
         return False
 
     def engine_candidates(self,role):
-        if not self.engine_failover_enabled():return ['codex']
+        allowed=self.allowed_engines()
+        if not self.engine_failover_enabled():return ['codex'] if 'codex' in allowed else allowed[:1]
         preferred=(self.config.get('role_engines') or {}).get(role,self.config.get('primary_engine','codex'))
         if preferred not in ENGINES:raise ValueError('Invalid preferred engine for '+role)
         order=[preferred]+[e for e in ENGINES if e!=preferred]
-        return [e for e in order if self.engine_ready(e)]
+        return [e for e in order if e in allowed and self.engine_ready(e)]
 
     # ---- Deterministic QA fast paths: preflight, change tiers, source checks, scenario suites ----
     def qa_tiers_config(self):
@@ -1124,7 +1213,7 @@ class Team:
         return any(line[3:].strip().strip('"').replace(chr(92),'/').startswith(tuple(prefixes)) for line in out.splitlines() if len(line)>3)
 
     def run_worker_engines(self,role):
-        if not self.engine_failover_enabled():return self.run_worker_engine(role,'codex')
+        if not self.engine_failover_enabled():return self.run_worker_engine(role,self.engine_candidates(role)[0])
         candidates=self.engine_candidates(role)
         tried=[]
         for engine in candidates:
@@ -1163,6 +1252,7 @@ class Team:
             policy=self.worker_model(role)
         claude_report=None
         self.event('worker_model_selected',role=role,policy=policy,engine=engine)
+        self.quota_resets_at=None
         last_heartbeat=0;last_output=time.monotonic();q=queue.Queue();terminal=None;stop_at=None;quota=False;failed=False;completed=False;started=time.monotonic();previous_tick=started
         with log.open('w',encoding='utf-8') as f:
             p=background_popen(args,cwd=self.project,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',bufsize=1)
@@ -1205,7 +1295,11 @@ class Team:
                     if engine=='claude':
                         kind=event.get('type')
                         # Only the limit status counts; overageStatus is "rejected" on every event when overage is disabled.
-                        if kind=='rate_limit_event' and (event.get('rate_limit_info') or {}).get('status')=='rejected':quota=True
+                        if kind=='rate_limit_event' and (event.get('rate_limit_info') or {}).get('status')=='rejected':
+                            quota=True
+                            # The account states its own reset; trust it over the strike back-off.
+                            resets=(event.get('rate_limit_info') or {}).get('resetsAt')
+                            if isinstance(resets,(int,float)) and resets>time.time():self.quota_resets_at=float(resets)
                         if kind=='result':
                             terminal=now
                             if event.get('is_error') or event.get('subtype')!='success':
@@ -2054,6 +2148,12 @@ class Team:
         if self.inputs() and stage=='schedule':self.persist(stage='planner');stage='planner'
         if stage=='schedule' and self.retry_parked_release():stage=self.state['stage']
         if stage=='schedule':
+            if self.config.get('archive_done_tasks'):
+                # Between batches no QA progress or receipt is pending, so the tasks.md rewrite costs no evidence.
+                try:
+                    archived=archive_done_rows(self.project,int(self.config.get('archive_keep_log_entries',8)))
+                    if archived:self.event('tasks_archived',tasks=archived,archive=TASK_ARCHIVE)
+                except (OSError,ValueError) as exc:self.event('tasks_archive_failed',error=str(exc))
             raw=backlog(self.project)[1]
             delivered=self.state.get('delivered_release') or {}
             # The planner gets one pass to record a just-delivered open row; afterwards it is never re-dispatched.
@@ -2110,16 +2210,20 @@ class Team:
         if now<self.state.get('quota_next_check_at',0):return
         # Probe failures must not become worker failures or consume agent budgets.
         self.persist(quota_next_check_at=now+300)
-        try:
+        if 'codex' not in self.allowed_engines():
+            try:status='available' if self.engine_ready('claude') else 'limited'
+            except Exception:status='unknown'
+        else:
+          try:
             binary=shutil.which(self.config['codex'])
             if not binary:raise RuntimeError('CLI unavailable')
             result=read_limits(binary,self.project,attach_worker_job,terminate_owned)
             status=availability(result)
-        except Exception:
+          except Exception:
             status='unknown'
-        if status=='available' and self.engine_failover_enabled():
+          if status=='available' and self.engine_failover_enabled():
             if (self.state.get('engines') or {}).get('codex'):self.mark_engine('codex',False)
-        elif self.engine_failover_enabled():
+          elif self.engine_failover_enabled():
             # Codex is still limited; Claude can take over once its own cooldown has elapsed.
             try:
                 if self.engine_ready('claude'):status='available'
@@ -2266,19 +2370,20 @@ def doctor(team):
     checks=[]
     checks.append(('git',shutil.which('git') is not None))
     checks.append(('python',sys.version_info>=(3,10)))
-    checks.append(('codex',shutil.which(team.config['codex']) is not None))
+    codex_allowed='codex' in team.allowed_engines()
+    if codex_allowed:checks.append(('codex',shutil.which(team.config['codex']) is not None))
     try:backlog(team.project);checks.append(('backlog_graph',True))
     except Exception:checks.append(('backlog_graph',False))
     try:checks.append(('no_competing_workers',not competing_processes(team.project)))
     except Exception:checks.append(('process_inventory',False))
     for role in ROLES:checks.append(('role_'+role,(team.home/'agents'/role/'prompt.md').exists() and (team.home/'agents'/role/'role.json').exists()))
-    binary=shutil.which(team.config['codex'])
+    binary=shutil.which(team.config['codex']) if codex_allowed else None
     if binary:
         try:
             auth=background_run([binary,'login','status'],capture_output=True,timeout=20)
             checks.append(('codex_login',auth.returncode==0))
         except Exception:checks.append(('codex_login',False))
-    if team.config.get('engine_failover'):
+    if team.config.get('engine_failover') or not codex_allowed:
         claude=shutil.which(team.config.get('claude_binary','claude'))
         checks.append(('claude',claude is not None))
         if claude:

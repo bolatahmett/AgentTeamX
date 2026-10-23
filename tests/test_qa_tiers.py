@@ -190,7 +190,8 @@ class ControllerFastPathTests(unittest.TestCase):
         self.home.mkdir()
         config = json.loads((Path(team.__file__).parent / 'team.json').read_text(encoding='utf-8-sig'))
         config.update(auto_commit=False, qa_owns_environment=False, autonomous_intervention=False,
-                      engine_failover=False, max_calls_per_delivery=1000, max_calls_per_start=1000)
+                      engine_failover=False, max_calls_per_delivery=1000, max_calls_per_start=1000,
+                      archive_done_tasks=False)
         config['qa_tiers'] = {'enabled': True, 'ui_paths': ['apps/web/'], 'suites': True,
                               'shell': ['powershell', '-NoProfile', '-Command'],
                               'source_checks': [{'id': 'typecheck', 'command': 'pnpm typecheck'},
