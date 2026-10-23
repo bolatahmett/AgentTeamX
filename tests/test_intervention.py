@@ -298,7 +298,7 @@ class InterventionTests(unittest.TestCase):
         incident=c.state['intervention']['incident']
         c.persist(parked_tasks={'incident:'+incident:{'at':'x','retry_at':time.time()+3600,'reason':'r'}})
         for _ in range(3):
-            c.persist(intervention=None,**{k:v for k,v in stall.items() if k!='intervention'})
+            c.persist(intervention=None,suppressed_incident=None,**{k:v for k,v in stall.items() if k!='intervention'})
             c.schedule_intervention()
         events=(c.folder/'events.jsonl').read_text(encoding='utf-8')
         self.assertEqual(events.count('parked_incident_suppressed'),1)

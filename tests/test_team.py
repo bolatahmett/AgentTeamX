@@ -461,6 +461,14 @@ class TeamTests(unittest.TestCase):
                     self.controller.execute(role)
                 self.assertNotIn(role, self.controller.state.get('receipts', {}))
 
+    def test_free_text_status_keeps_row_and_dependents_parseable(self):
+        self.write('tasks.md', '- [x] **T1 Done** | source delivered; acceptance pending | Dependencies: None.\n'
+                   '- [ ] **T2 Open** | todo | Dependencies: T1.\n'
+                   '- [ ] **T3 Wait** | source delivered; acceptance pending | Dependencies: T1.\n')
+        rows, ready = team.backlog(self.project)
+        self.assertEqual(ready, ['T2'])
+        self.assertEqual({r['id']: r['status'] for r in rows}, {'T1': 'done', 'T2': 'todo', 'T3': 'blocked'})
+
     def test_planner_may_only_edit_valid_task_graph(self):
         self.controller.initialize()
         self.effects['planner'] = lambda: self.write('tasks.md', '- [ ] **T2 Planned work** | todo | Dependencies: None.\n')

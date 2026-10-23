@@ -37,7 +37,7 @@ def project_root(home=HOME):
 PROJECT = project_root()
 # Live controllers are recognized by this exact script path, wherever the team home lives.
 CONTROLLER = str(HOME/'team.py').replace('\\','/').lower()
-ROW = re.compile(r'^- \[([ xX])\] \*\*(T\d+[A-Z]?)\s.*?\*\*\s*\|\s*(todo|in_progress|blocked|done)\s*\|\s*[^|:\r\n]+:\s*([^.|\r\n]+)', re.M)
+ROW = re.compile(r'^- \[([ xX])\] \*\*(T\d+[A-Z]?)\s.*?\*\*\s*\|\s*([^|\r\n]+?)\s*\|\s*[^|:\r\n]+:\s*([^.|\r\n]+)', re.M)
 ROLES = {'planner','developer','ux_reviewer','code_reviewer','qa','devops','operations','environment_engineer','technical_lead'}
 CAPABILITIES = {'browser','local_runtime','build_tools'}
 READ_ONLY = {'ux_reviewer','code_reviewer','devops','operations'}
@@ -191,13 +191,20 @@ def retained_gates(receipts, current):
     return {role:receipt for role,receipt in receipts.items() if gate_valid(receipt,role,current)}
 
 
+def row_status(checked, text):
+    # Free-text statuses (e.g. 'source delivered; acceptance pending') must not drop the row and break dependents.
+    word=text.strip().lower()
+    if word in {'todo','in_progress','blocked','done'}:return word
+    return 'done' if str(checked).lower()=='x' else 'blocked'
+
+
 def changed_files(before, after):
     return sorted(n for n in before['files'].keys() | after['files'].keys() if before['files'].get(n)!=after['files'].get(n))
 
 
 def backlog(project):
     text=(project/'tasks.md').read_text(encoding='utf-8-sig')
-    rows=[{'id':i,'status':s,'checked':c.lower()=='x','deps':re.findall(r'T\d+[A-Z]?',d)} for c,i,s,d in ROW.findall(text)]
+    rows=[{'id':i,'status':row_status(c,s),'checked':c.lower()=='x','deps':re.findall(r'T\d+[A-Z]?',d)} for c,i,s,d in ROW.findall(text)]
     by_id={r['id']:r for r in rows}
     if not rows or len(rows)!=len(by_id):
         raise ValueError('Missing or duplicate task rows')
@@ -253,7 +260,7 @@ def task_brief(project, ids, limit=40000, row_cap=14000):
         if tid not in blocks:
             blocks[tid] = '\n'.join(lines[i:end]).rstrip()
             where[tid] = i + 1
-    status = {i: s for _, i, s, _ in ROW.findall(text)}
+    status = {i: row_status(c, s) for c, i, s, _ in ROW.findall(text)}
     deps = {i: re.findall(r'T\d+[A-Z]?', d) for _, i, _, d in ROW.findall(text)}
     wanted = [i for i in dict.fromkeys(ids or []) if i in blocks]
 
@@ -388,6 +395,11 @@ def process_inventory(project):
     return data if isinstance(data,list) else [data]
 
 
+def controller_command(cmd):
+    """True for a normalized command line running this controller, including a relative 'team.py' launch."""
+    return CONTROLLER in cmd or 'agent-team/team.py' in cmd or bool(re.search(r'(^|[\s"/])team\.py"?\s+[a-z-]',cmd))
+
+
 def competing_processes(project, inventory=None):
     active=[]
     for row in process_inventory(project) if inventory is None else inventory:
@@ -396,7 +408,7 @@ def competing_processes(project, inventory=None):
         if row['ProcessId']==os.getpid() or name not in {'python.exe','pythonw.exe','python3.exe','codex.exe','node.exe','claude.exe','claude'}:continue
         old=('plannersupervisior/planner.py' in cmd or 'codex-supervisor-windows/supervisor.py' in cmd)
         # A controller from the former in-project agent-team/ location still counts as a competing writer.
-        current=((CONTROLLER in cmd or 'agent-team/team.py' in cmd) and re.search(r'\b(start|run-once|initialize|commit|publish|retry|next|recover)\b',cmd))
+        current=(controller_command(cmd) and re.search(r'\b(start|run-once|initialize|commit|publish|retry|next|recover)\b',cmd))
         worker=(str(project).replace('\\','/').lower() in cmd and (' exec ' in cmd or ' exec-server ' in cmd) and 'exec-server' not in cmd)
         # Claude workers are launched with --add-dir <project> and stream-json so they are identifiable.
         claude_worker=(str(project).replace('\\','/').lower() in cmd and '--add-dir' in cmd and 'stream-json' in cmd and ' -p' in cmd)
@@ -478,7 +490,7 @@ class Team:
         alive=False
         if record:
             try:
-                alive=any(r['ProcessId']==record.get('pid') and CONTROLLER in (r.get('CommandLine') or '').replace('\\','/').lower() for r in process_inventory(self.project))
+                alive=any(r['ProcessId']==record.get('pid') and controller_command((r.get('CommandLine') or '').replace('\\','/').lower()) for r in process_inventory(self.project))
             except Exception:alive=None
         health=load(self.folder/'health.json',{}) or self.state.get('health')
         return {**self.state,'health':health,'guardian':load(self.folder/'guardian.json',{}),'heartbeat':load(self.folder/'heartbeat.json',{}),'controller_status':self.state.get('controller_status') if alive else 'not_running','stop_requested':self.stop.exists(),'lock':record,'controller_alive':alive,'pending_inputs':len(self.inputs())}
@@ -1571,7 +1583,10 @@ class Team:
         if (not intervention.get('started') and isinstance(parked_entry,dict) and
                 time.time()<parked_entry.get('retry_at',0)):
             # A parked taskless incident stays suppressed until its retry_at: no new coordinator run.
-            repeated=self.state.get('suppressed_incident')==incident
+            # The state key can be reset by interleaved attention writes, so also throttle by time in memory.
+            noted=getattr(self,'_suppressed_noted',{})
+            repeated=self.state.get('suppressed_incident')==incident or time.time()-noted.get(incident,0)<1800
+            noted[incident]=noted.get(incident,0) if repeated else time.time();self._suppressed_noted=noted
             self.persist(stage='schedule',attention_kind=None,failure_kind=None,intervention=None,suppressed_incident=incident,
                          reason='Incident is parked until its retry time; continuing other work')
             if not repeated:self.event('parked_incident_suppressed',incident=incident,retry_at=parked_entry.get('retry_at'))
