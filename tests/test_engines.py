@@ -30,8 +30,9 @@ class EngineTests(unittest.TestCase):
         config = json.loads((source / 'team.json').read_text(encoding='utf-8-sig'))
         self.owner_role_engines = config.get('role_engines', {})
         # Routing tests below assume the Codex-primary default; the owner's split is checked separately.
+        self.owner_engines = config.get('engines')
         config.update(auto_commit=False, qa_owns_environment=False, qa_tiers={'enabled': False}, autonomous_intervention=False, role_engines={},
-                      archive_done_tasks=False)
+                      archive_done_tasks=False, engines=list(team.ENGINES), primary_engine='codex')
         team.save(self.home / 'team.json', config)
         (self.home / 'report.schema.json').write_text((source / 'report.schema.json').read_text(encoding='utf-8'), encoding='utf-8')
         (self.project / '.gitignore').write_text('.supervisor/\n', encoding='utf-8')
@@ -131,6 +132,24 @@ class EngineTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'QUOTA_LIMIT'):
                 self.controller.run_worker('qa')
         run.assert_called_once_with('qa', 'codex')
+
+    def test_owner_claude_only_setting_never_routes_to_codex(self):
+        self.assertEqual(self.owner_engines, ['claude'])
+        self.controller.config['engines'] = ['claude']
+        self.assertEqual(self.controller.engine_candidates('developer'), ['claude'])
+        self.controller.config['engine_failover'] = False
+        self.assertEqual(self.controller.engine_candidates('qa'), ['claude'])
+        self.controller.config['engines'] = ['other']
+        with self.assertRaises(ValueError):
+            self.controller.engine_candidates('qa')
+
+    def test_claude_only_quota_resume_does_not_probe_codex(self):
+        self.controller.config['engines'] = ['claude']
+        self.controller.persist(failure_kind='quota', resume_role='developer', quota_next_check_at=0)
+        with patch.object(team, 'read_limits') as probe, patch.object(self.controller, 'engine_ready', return_value=False):
+            self.controller.resume_quota()
+        probe.assert_not_called()
+        self.assertEqual(self.controller.state['quota_observation']['status'], 'limited')
 
     def test_missing_claude_binary_is_not_a_candidate(self):
         with patch.object(team.shutil, 'which', side_effect=lambda n: None if n == 'claude' else n):

@@ -41,7 +41,7 @@
   "delivery_epoch": "focused-delivery-2026-10-18",
   "max_calls_per_release_recovery": 40,
   "engine_failover": true,
-  "primary_engine": "codex",
+  "primary_engine": "claude",
   "role_engines": {
     "technical_lead": "claude",
     "code_reviewer": "claude"
@@ -212,5 +212,8 @@
   "park_retry_hours": 12,
   "max_interventions_per_incident": 3,
   "call_budget_cooldown_seconds": 1800,
-  "delivery_batches": []
+  "delivery_batches": [],
+  "engines": [
+    "claude"
+  ]
 }
