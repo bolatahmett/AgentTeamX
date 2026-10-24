@@ -198,6 +198,13 @@ def row_status(checked, text):
     return 'done' if str(checked).lower()=='x' else 'blocked'
 
 
+def open_task_ids(project):
+    # Archived rows are closed, so only rows still listed and not done count as open.
+    try:text=(project/'tasks.md').read_text(encoding='utf-8-sig')
+    except OSError:return set()
+    return {i for c,i,s,d in ROW.findall(text) if row_status(c,s)!='done'}
+
+
 def changed_files(before, after):
     return sorted(n for n in before['files'].keys() | after['files'].keys() if before['files'].get(n)!=after['files'].get(n))
 
@@ -1018,7 +1025,8 @@ class Team:
         info={'status':'ran','suite':suite['id'],'exit':code,'seconds':seconds,'log':str(log.relative_to(self.project)),
               'passed':outcome['passed'],'failed':outcome['failed'],'missing':outcome['missing'],'problems':outcome['problems']}
         sweeps=dict(self.state.get('suite_sweeps') or {})
-        sweeps[suite['id']]={'snapshot':current['fingerprint'],'ok':outcome['ok'],'at':stamp(),**{k:info[k] for k in ('log','failed','missing','problems')}}
+        sweeps[suite['id']]={'snapshot':current['fingerprint'],'scopes':{k:current['scopes'].get(k) for k in ('application','environment')},
+                             'ok':outcome['ok'],'at':stamp(),**{k:info[k] for k in ('log','failed','missing','problems')}}
         self.persist(suite_sweeps=sweeps)
         return outcome,info
 
@@ -1031,10 +1039,22 @@ class Team:
         suites,_=qa_tiers.load_suites(self.folder/'artifacts'/'qa',load)
         universe=self.state.get('qa_scenario_universe') or {}
         sweeps=self.state.get('suite_sweeps') or {}
-        runnable=[]
+        runnable=[];deferred=[]
+        open_rows=open_task_ids(self.project)
         for task in tasks:
             suite=qa_tiers.matching_suite(suites,[task],universe.get(task))
-            if suite and (sweeps.get(suite['id']) or {}).get('snapshot')!=current['fingerprint']:runnable.append((task,suite))
+            if not suite:continue
+            previous=sweeps.get(suite['id']) or {}
+            if previous.get('snapshot')==current['fingerprint']:continue
+            if previous and not previous.get('ok'):
+                # A failure stays current until application/environment change; team or bookkeeping edits do not retest it.
+                if previous.get('scopes') and all(previous['scopes'].get(k)==current['scopes'].get(k) for k in ('application','environment')):continue
+                # Scenarios owned by another still-open row cannot appear until that row is delivered.
+                waiting=sorted({m.split('.')[0] for m in previous.get('missing') or [] if m.split('.')[0]!=task and m.split('.')[0] in open_rows})
+                if waiting and not previous.get('failed'):deferred.append((task,suite['id'],waiting));continue
+            runnable.append((task,suite))
+        for task,suite_id,waiting in deferred:
+            self.event('acceptance_suite_deferred',task=task,suite=suite_id,waiting_for=waiting)
         if not runnable:return tasks
         failures=qa_tiers.preflight(self.project,cfg.get('preflight') or {},shutil.which)
         if failures:

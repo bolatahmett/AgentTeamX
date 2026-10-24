@@ -458,6 +458,38 @@ class ControllerFastPathTests(unittest.TestCase):
         self.assertEqual(self.roles, ['qa'])
         self.assertIn('- [x] **T1 - Verify one** | done', (self.project / 'tasks.md').read_text(encoding='utf-8'))
 
+    def test_failed_sweep_suite_reruns_only_after_application_or_environment_change(self):
+        self.acceptance_rows()
+        qa, writer = self.write_suite()
+        self.suite_writer = lambda args: writer(args, 'failed')
+        runs = lambda: len([a for a in self.owned if '-File' in a])
+        self.controller.acceptance_sweep(['T1'])
+        self.assertEqual(runs(), 1)
+        self.write('docs/history/note.md', 'bookkeeping\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Docs only')
+        self.controller.acceptance_sweep(['T1'])
+        self.assertEqual(runs(), 1)
+        self.write('apps/web/page.txt', 'ui changed\n')
+        self.controller.acceptance_sweep(['T1'])
+        self.assertEqual(runs(), 2)
+
+    def test_suite_missing_another_open_rows_scenarios_is_deferred(self):
+        self.write('tasks.md', '- [ ] **T1 - Verify one** | in_progress | Dependencies: None.\n'
+                               '- [ ] **T9 - Later work** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Rows')
+        self.controller.config['qa_acceptance_tasks'] = ['T1']
+        self.controller.initialize()
+        qa, writer = self.write_suite(scenarios=('T1.a', 'T9.b'))
+        self.suite_writer = lambda args: (qa / 'result-S1.json').write_text(json.dumps({'suite': 'S1', 'snapshot': args[args.index('-ExpectedSnapshot') + 1],
+            'scenarios': [{'id': 'T1.a', 'status': 'passed', 'evidence': ['observed T1.a']}]}), encoding='utf-8')
+        runs = lambda: len([a for a in self.owned if '-File' in a])
+        self.controller.acceptance_sweep(['T1'])
+        self.assertEqual(runs(), 1)
+        self.write('apps/web/page.txt', 'ui changed\n')
+        self.controller.acceptance_sweep(['T1'])
+        self.assertEqual(runs(), 1)
+        self.assertIn('acceptance_suite_deferred', (self.controller.folder / 'events.jsonl').read_text(encoding='utf-8'))
+
     def test_unfinished_acceptance_parks_the_row_and_moves_on(self):
         self.acceptance_rows()
         self.engine_status = {'qa': 'blocked'}
