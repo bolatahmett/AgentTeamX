@@ -39,7 +39,10 @@ def workflows(commit):
         rows=json.loads(result.stdout)
     except FileNotFoundError:
         request=urllib.request.Request('https://api.github.com/repos/bolatahmett/AfterDark/actions/runs?head_sha='+commit+'&per_page=30',headers={'User-Agent':'AfterDark-release-observer','Accept':'application/vnd.github+json'})
-        with urllib.request.urlopen(request,timeout=20) as response:runs=json.load(response)['workflow_runs']
+        try:
+            with urllib.request.urlopen(request,timeout=20) as response:runs=json.load(response)['workflow_runs']
+        except (OSError,ValueError,KeyError) as exc:
+            raise RuntimeError('gh CLI not installed and anonymous GitHub API failed ('+str(exc)+'); install and log in to gh') from None
         rows=[{'workflowName':r['name'],'headSha':r['head_sha'],'status':r['status'],'conclusion':r['conclusion'],'url':r['html_url']} for r in runs]
     selected=[]
     for name in ('Local application checks','Oracle deployment'):
@@ -126,15 +129,19 @@ def run():
                 if s['stage']=='published':
                     if now-last_verify>=30:
                         last_verify=now
+                        # An unobservable CI must still hit the verification deadline instead of waiting forever.
                         try:
                             result,rows=workflows(s['published_commit'])
                             reason='Exact-release CI/deployment observation: '+result
                             team.save(folder/'release-observation.json',{'at':team.stamp(),'commit':s['published_commit'],'ci':result,'workflows':rows,'health':observation})
+                        except Exception as exc:result,reason='unavailable',str(exc)
+                        try:
                             if result=='passed' and observation.get('release')==s['published_commit'] and observation.get('status')=='ready':
                                 c.persist(stage='release_verified',release_recovery={**(s.get('release_recovery') or {}),'active':False},reason='Exact CI/deployment and live release verified')
                                 c.event('release_verified',commit=s['published_commit'])
                             elif s.get('publication_started_at') and now-dt.datetime.fromisoformat(s['publication_started_at']).timestamp()>c.config.get('release_verify_timeout_seconds',3600):
-                                c.begin_release_recovery(s['published_commit'],'Exact release verification deadline exceeded; inspect workflow and live SHA')
+                                detail='' if result!='unavailable' else ' (CI unobservable: '+reason+')'
+                                c.begin_release_recovery(s['published_commit'],'Exact release verification deadline exceeded; inspect workflow and live SHA'+detail)
                             elif result=='failed':
                                 c.begin_release_recovery(s['published_commit'],'CI/deployment failed; inspect exact release workflow')
                         except Exception as exc:reason=str(exc)
