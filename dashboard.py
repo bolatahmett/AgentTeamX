@@ -456,7 +456,11 @@ def render_rich(data, width=100, color=True):
         info=engines.get(name) or {}
         if info:
             wait=int(float(info.get('retry_after',0))-time.time())
-            return c(sym['bad']+' '+name+' quota'+(f' (retry {wait//60}m)' if wait>0 else ' (retrying)'),'bred')
+            if wait>0:
+                return c(sym['bad']+' '+name+' quota'+f' (retry {wait//60}m)','bred')
+            # An expired cooldown makes the engine eligible again. The controller
+            # keeps the old marker only so a real retry can reclassify it if needed.
+            return c(sym['ok']+' '+name,'bgreen')
         return c(sym['ok']+' '+name,'bgreen')
     row('Engines',engine_text('codex')+'   '+engine_text('claude')+c('   QA mode: '+str((cfg.get('qa_tiers') or {}).get('mode','tiered')),'gray'))
     # Release

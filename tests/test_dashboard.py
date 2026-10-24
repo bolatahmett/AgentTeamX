@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -117,6 +118,13 @@ class DashboardTests(unittest.TestCase):
         self.state['reason']='token=PRIVATE_TOKEN';self.state['stage']='needs_attention'
         frame=self.rich(color=True)
         self.assertIn('\033[',frame);self.assertNotIn('PRIVATE_TOKEN',frame)
+
+    def test_expired_engine_cooldown_is_shown_as_ready(self):
+        self.state['engines']={'claude':{'retry_after':time.time()-60}}
+        frame=self.rich()
+        self.assertNotIn('claude quota',frame)
+        self.state['engines']['claude']['retry_after']=time.time()+3600
+        self.assertIn('claude quota',self.rich())
 
     def test_once_watch_is_read_only_and_terminates(self):
         state_file=self.write('state.json',json.dumps(self.state));before=state_file.read_bytes()

@@ -15,7 +15,7 @@
   "auto_commit": true,
   "allow_push": true,
   "allow_deploy": true,
-  "publish_min_interval_hours": 24,
+  "publish_min_interval_hours": 3,
   "skip_released_tasks": true,
   "continue_after_local_commit": true,
   "codex": "codex",
@@ -44,7 +44,14 @@
   "primary_engine": "claude",
   "role_engines": {
     "technical_lead": "claude",
-    "code_reviewer": "claude"
+    "code_reviewer": "claude",
+    "ux_reviewer": "claude",
+    "developer": "codex",
+    "qa": "codex",
+    "planner": "codex",
+    "devops": "codex",
+    "operations": "codex",
+    "environment_engineer": "codex"
   },
   "claude_binary": "claude",
   "claude_models": {
@@ -196,7 +203,30 @@
     "T103",
     "T138",
     "T142",
-    "T143"
+    "T143",
+    "T115",
+    "T117",
+    "T118",
+    "T119",
+    "T120",
+    "T122",
+    "T124",
+    "T125",
+    "T127",
+    "T129",
+    "T133",
+    "T134",
+    "T137",
+    "T139",
+    "T140",
+    "T141",
+    "T144",
+    "T145",
+    "T147",
+    "T148",
+    "T149",
+    "T150",
+    "T152"
   ],
   "auto_batch_size": 1,
   "autonomous_discovery": {
@@ -216,6 +246,7 @@
   "call_budget_cooldown_seconds": 1800,
   "delivery_batches": [],
   "engines": [
-    "claude"
+    "claude",
+    "codex"
   ]
 }

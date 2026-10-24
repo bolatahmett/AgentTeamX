@@ -102,6 +102,9 @@ def run():
                 c.event('controller_exit',exit_code=child.returncode)
                 if child.returncode!=0:restarts.append(now);observed_exit=True
                 child=None
+                # The state loaded at the top of this loop predates the controller's final writes
+                # (for example a completed repair); persisting it would roll those writes back.
+                c=team.Team();s=c.state;view=c.view()
             if not view['controller_alive'] and not (child and child.poll() is None):
                 current_machinery=machinery_fingerprint()
                 if initial_machinery is None:initial_machinery=current_machinery

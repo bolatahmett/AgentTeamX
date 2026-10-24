@@ -764,7 +764,7 @@ class Team:
         return bool(self.config.get('engine_failover'))
 
     def allowed_engines(self):
-        """Engines the owner allows; team.json 'engines' narrows the Codex+Claude pair (owner 2026-10-23: Claude only)."""
+        """Engines the owner allows; team.json 'engines' narrows the Codex+Claude pair (owner 2026-10-24: Claude + Codex)."""
         chosen=self.config.get('engines') or list(ENGINES)
         if not isinstance(chosen,list) or any(e not in ENGINES for e in chosen):raise ValueError('Invalid engines setting')
         return [e for e in ENGINES if e in chosen]
@@ -1415,6 +1415,12 @@ class Team:
         if not intervention and role in READ_ONLY | {'qa','environment_engineer','technical_lead'} and changed and set(changed)<=monitoring:
             self.persist(stage='code_reviewer',snapshot=after['fingerprint'],receipts=retained_gates(self.state.get('receipts',{}),after),reason='Concurrent monitoring edits detected; unfinished report discarded, fresh review scheduled')
             self.event('concurrent_monitoring_edit',role=role,files=changed)
+            return
+        if not intervention and role=='qa' and changed and self.state.get('concurrent_source_retry')!=before['fingerprint']:
+            # Files changed while QA ran. Owner edits land concurrently, so discard the unfinished report and
+            # schedule an independent review of the new source once per snapshot; a repeat still fails the gate.
+            self.persist(stage='code_reviewer',snapshot=after['fingerprint'],concurrent_source_retry=before['fingerprint'],receipts=retained_gates(self.state.get('receipts',{}),after),reason='Concurrent source edits detected during QA; unfinished report discarded, fresh review scheduled')
+            self.event('concurrent_source_edit',role=role,files=changed)
             return
         if not intervention and role in READ_ONLY | {'qa','environment_engineer','technical_lead'} and changed:raise RuntimeError(role+' changed source; gate rejected: '+', '.join(changed[:10]))
         if role=='planner' and any(p!='tasks.md' for p in changed):raise RuntimeError('Planner changed files outside tasks.md')
@@ -2320,7 +2326,17 @@ class Team:
         # Staged content that equals the reviewed working tree is restaged identically; only partial staging is ambiguous.
         staged={l for l in git(self.project,'diff','--cached','--name-only','-z').split(b'\0') if l}
         if staged&{l for l in git(self.project,'diff','--name-only','-z').split(b'\0') if l}:raise RuntimeError('Index already contains partially staged changes; preserve and review manually')
-        if not paths:raise RuntimeError('No changes to commit')
+        if not paths:
+            # The reviewed snapshot includes HEAD, so a clean tree means the reviewed content was already committed
+            # (for example by the owner). Adopt that commit instead of failing; publication still verifies ancestry.
+            head=snap['head']
+            batch=self.state.get('delivery_batch') or {}
+            committed=set(batch.get('tasks') or [])|({self.state['task']} if self.state.get('task') else set())
+            self.persist(stage='release_ready',commit=head,snapshot=snap['fingerprint'],
+                         released_tasks=sorted(set(self.state.get('released_tasks') or [])|committed),
+                         reason='Reviewed content was already committed; adopted HEAD as the release commit')
+            self.event('local_commit_adopted',commit=head,reviewed_snapshot=expected)
+            return head
         for name in paths:
             bits=Path(name).parts
             if any(b.startswith('.env') and b!='.env.example' for b in bits) or Path(name).suffix.lower() in {'.pem','.key','.pfx'}:raise RuntimeError('Sensitive-looking path excluded: '+name)

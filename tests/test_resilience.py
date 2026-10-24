@@ -76,6 +76,17 @@ class ResilienceTests(unittest.TestCase):
             self.assertNotIn('qa',f.controller.state.get('reports',{}))
         finally:f.doCleanups()
 
+    def test_concurrent_source_edit_during_qa_reschedules_review_once(self):
+        from test_team import TeamTests
+        f=TeamTests();f.setUp()
+        try:
+            f.adopted()
+            f.effects['qa']=lambda:f.write('apps/web/config/radio-stations.json','owner edit')
+            f.controller.execute('qa')
+            self.assertEqual(f.controller.state['stage'],'code_reviewer')
+            self.assertNotIn('qa',f.controller.state['receipts'])
+        finally:f.doCleanups()
+
     def test_qa_bootstrap_retry_stays_in_same_role_then_has_bounded_fallback(self):
         from test_team import TeamTests
         f=TeamTests();f.setUp()

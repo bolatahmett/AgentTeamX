@@ -603,6 +603,21 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'HEAD').decode().strip(), head)
         self.assertEqual(self.git('status', '--porcelain'), b'')
 
+    def test_commit_adopts_head_when_reviewed_content_already_committed(self):
+        self.approvals()
+        self.git('add', 'app.txt')
+        self.git('commit', '-m', 'owner commit')
+        # The controller re-fingerprints the clean tree and carries the reviewed receipts to it.
+        expected = team.snapshot(self.project)['fingerprint']
+        receipts = self.controller.state['receipts']
+        for receipt in receipts.values():
+            receipt['snapshot'] = expected
+        self.controller.persist(receipts=receipts, snapshot=expected)
+        head = self.controller.commit(expected, 'Reviewed fixture change')
+        self.assertEqual(self.git('rev-parse', 'HEAD').decode().strip(), head)
+        self.assertEqual(self.controller.state['stage'], 'release_ready')
+        self.assertEqual(self.controller.state['commit'], head)
+
     def test_commit_accepts_deletion_already_staged(self):
         self.write('gone.txt', 'x')
         self.git('add', 'gone.txt')
