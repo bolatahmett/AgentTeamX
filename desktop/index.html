@@ -23,20 +23,64 @@
   .event.live strong { color:var(--teal); }
   .event time { color:var(--muted); margin-right:8px; }
   pre { white-space:pre-wrap; font-size:12px; color:var(--muted); margin:12px 0 0; }
+  nav { display:flex; gap:4px; }
+  nav button.active { border-color:var(--teal); color:var(--teal); }
+  .hidden { display:none !important; }
+  #agents { display:grid; grid-template-columns:280px 1fr; gap:16px; padding:16px 20px; flex:1; min-height:0; }
+  #agentList { display:flex; flex-direction:column; gap:6px; }
+  .agent { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; cursor:pointer; }
+  .agent.selected { border-color:var(--teal); }
+  .agent .row { display:flex; align-items:center; gap:8px; }
+  .agent small, .muted { color:var(--muted); font-size:12px; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); }
+  .badge.live { border-color:var(--teal); color:var(--teal); }
+  .badge.passed, .badge.completed, .badge.clear { color:var(--teal); }
+  .badge.blocked, .badge.changes_requested, .badge.failed { color:var(--bad); }
+  #agentDetail h3 { margin:16px 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  #agentDetail h3:first-child { margin-top:0; }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; }
+  .report { border-bottom:1px solid var(--line); padding:6px 0; font-size:13px; }
+  body:has(#agents:not(.hidden)) { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+  body:has(#board:not(.hidden)) { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+  #board { display:flex; flex-direction:column; gap:10px; padding:16px 20px; flex:1; min-height:0; }
+  .toolbar { display:flex; gap:10px; align-items:center; }
+  .toolbar input { flex:1; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 10px; }
+  .toolbar span { color:var(--muted); font-size:12px; }
+  .columns { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; flex:1; min-height:0; }
+  .column { background:var(--panel); border:1px solid var(--line); border-radius:8px; display:flex; flex-direction:column; min-height:0; }
+  .column.over { border-color:var(--teal); }
+  .column h2 { padding:12px 12px 0; display:flex; justify-content:space-between; }
+  .cards { padding:8px 10px 10px; overflow:auto; display:flex; flex-direction:column; gap:8px; flex:1; }
+  .card { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; cursor:grab; }
+  .card.archived { cursor:default; opacity:.65; }
+  .card .id { color:var(--teal); font-weight:600; margin-right:6px; }
+  .card .meta { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-top:6px; color:var(--muted); font-size:11px; }
+  .card select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:4px; font-size:11px; }
+  .card pre { display:none; max-height:260px; overflow:auto; }
+  .card.open pre { display:block; }
 </style>
 </head>
 <body>
 <header>
   <span id="dot" class="dot"></span>
   <h1>AgentTeamX</h1>
+  <nav><button data-tab="status" class="active">Status</button><button data-tab="board">Board</button><button data-tab="agents">Agents</button></nav>
   <button data-action="start">Start / Resume</button>
   <button data-action="retry">Retry</button>
   <button data-action="stop">Stop</button>
 </header>
-<main>
+<main id="status">
   <section><h2>Status</h2><dl id="fields"></dl><pre id="output"></pre></section>
   <section><h2>Recent events</h2><div id="events"></div></section>
 </main>
+<div id="agents" class="hidden">
+  <section><h2 id="agentHead">Agents</h2><div id="agentList"></div></section>
+  <section id="agentDetail"></section>
+</div>
+<div id="board" class="hidden">
+  <div class="toolbar"><input id="filter" placeholder="Filter by ID or title"><label><input type="checkbox" id="showArchived"> Show archived done</label><span id="boardMsg"></span></div>
+  <div class="columns" id="columns"></div>
+</div>
 <script>
   const SHOWN = ['controller_status', 'stage', 'active_role', 'task', 'calls', 'reason', 'last_summary', 'updated'];
   const el = (tag, text) => { const node = document.createElement(tag); node.textContent = text; return node; };
@@ -59,16 +103,138 @@
     button.addEventListener('click', async () => {
       const name = button.dataset.action;
       if (name === 'stop' && !confirm('Stop the team? Running work is preserved.')) return;
-      document.querySelectorAll('button').forEach((b) => (b.disabled = true));
+      document.querySelectorAll('header [data-action]').forEach((b) => (b.disabled = true));
       const result = await window.team.action(name);
       document.getElementById('output').textContent = result.output.slice(-2000);
-      document.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      document.querySelectorAll('header [data-action]').forEach((b) => (b.disabled = false));
       refresh();
     });
   });
 
+  const LABELS = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', done: 'Done' };
+  let board = { statuses: [], rows: [] };
+  const openCards = new Set();
+
+  function renderBoard() {
+    const q = document.getElementById('filter').value.trim().toLowerCase();
+    const showArchived = document.getElementById('showArchived').checked;
+    const rows = board.rows.filter((r) => (showArchived || !r.archived) && (!q || (r.id + ' ' + r.title).toLowerCase().includes(q)));
+    document.getElementById('columns').replaceChildren(...board.statuses.map((status) => {
+      const col = el('div', ''); col.className = 'column';
+      const items = rows.filter((r) => (board.statuses.includes(r.status) ? r.status : 'todo') === status);
+      const h = el('h2', LABELS[status] || status); h.append(el('span', String(items.length)));
+      const cards = el('div', ''); cards.className = 'cards';
+      cards.append(...items.map((r) => card(r)));
+      col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('over'); });
+      col.addEventListener('dragleave', () => col.classList.remove('over'));
+      col.addEventListener('drop', (e) => { e.preventDefault(); col.classList.remove('over'); move(e.dataTransfer.getData('text/plain'), status); });
+      col.append(h, cards);
+      return col;
+    }));
+  }
+
+  function card(r) {
+    const c = el('div', ''); c.className = 'card' + (r.archived ? ' archived' : '') + (openCards.has(r.id) ? ' open' : '');
+    const title = el('div', ''); title.append(el('span', r.id), el('span', r.title)); title.firstChild.className = 'id';
+    const meta = el('div', ''); meta.className = 'meta';
+    meta.append(el('span', r.archived ? 'archived' : (r.deps.length ? 'deps: ' + r.deps.join(', ') : r.section)));
+    if (!r.archived) {
+      c.draggable = true;
+      c.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', r.id));
+      const sel = el('select', '');
+      sel.append(...board.statuses.map((s) => { const o = el('option', LABELS[s]); o.value = s; o.selected = s === r.status; return o; }));
+      sel.addEventListener('click', (e) => e.stopPropagation());
+      sel.addEventListener('change', () => move(r.id, sel.value));
+      meta.append(sel);
+    }
+    c.append(title, meta, el('pre', r.body));
+    c.addEventListener('click', () => { openCards.has(r.id) ? openCards.delete(r.id) : openCards.add(r.id); c.classList.toggle('open'); });
+    return c;
+  }
+
+  async function move(id, status) {
+    const row = board.rows.find((r) => r.id === id);
+    if (!row || row.archived || row.status === status) return;
+    const result = await window.team.setStatus(id, status);
+    document.getElementById('boardMsg').textContent = result.output;
+    loadBoard();
+  }
+
+  async function loadBoard() { board = await window.team.tasks(); renderBoard(); }
+
+  document.getElementById('filter').addEventListener('input', renderBoard);
+  document.getElementById('showArchived').addEventListener('change', renderBoard);
+  let agentData = { agents: [] };
+  let selectedAgent = '';
+  const modelText = (m) => [m.model, m.reasoning_effort].filter(Boolean).join(' / ') || 'default';
+  const time = (at) => (at || '').replace('T', ' ').slice(0, 19);
+  const badge = (text, cls) => { const b = el('span', text); b.className = 'badge ' + (cls || text); return b; };
+  const chips = (items) => { const d = el('div', ''); d.className = 'chips'; d.append(...items.map((t) => badge(t, ''))); return d; };
+
+  function renderAgents() {
+    document.getElementById('agentHead').textContent = 'Agents' + (agentData.stage ? ' - stage: ' + agentData.stage : '');
+    if (!agentData.agents.some((a) => a.id === selectedAgent)) selectedAgent = (agentData.agents[0] || {}).id || '';
+    document.getElementById('agentList').replaceChildren(...agentData.agents.map((a) => {
+      const node = el('div', ''); node.className = 'agent' + (a.id === selectedAgent ? ' selected' : '');
+      const row = el('div', ''); row.className = 'row';
+      const dot = el('span', ''); dot.className = 'dot' + (a.active ? ' on' : '');
+      const name = el('strong', a.title); name.style.flex = '1';
+      row.append(dot, name);
+      if (a.active) row.append(badge('working', 'live'));
+      else if (a.reports[0]) row.append(badge(a.reports[0].status));
+      node.append(row, el('small', a.engine + ' - ' + modelText(a.model) + (a.active && a.task ? ' - ' + a.task : '')));
+      node.addEventListener('click', () => { selectedAgent = a.id; renderAgents(); });
+      return node;
+    }));
+    const a = agentData.agents.find((x) => x.id === selectedAgent);
+    const detail = document.getElementById('agentDetail');
+    if (!a) { detail.replaceChildren(el('p', 'No agent roles found.')); return; }
+    const fields = [['Role id', a.id], ['Engine', a.engine], ['Model', modelText(a.model)], ['Sandbox', a.sandbox || '-'],
+      ['Worker', a.worker ? 'yes (writes code)' : 'no'], ['Current task', a.task || '-'], ['Reports', String(a.report_count)]];
+    if (a.id === agentData.resume_role) fields.push(['Next', 'resumes after the active role']);
+    const dl = el('dl', ''); dl.append(...fields.flatMap(([k, v]) => [el('dt', k), el('dd', v)]));
+    const parts = [el('h3', a.title + (a.active ? ' - working now' : '')), dl];
+    if (a.active) {
+      parts.push(el('h3', 'Live steps'));
+      parts.push(...(a.steps.length ? a.steps.map((st) => {
+        const r = el('div', ''); r.className = 'event live'; r.append(el('strong', st.step || st.tool), el('span', st.status ? '  ' + st.status : '')); return r;
+      }) : [el('p', 'No steps yet.')]));
+    }
+    parts.push(el('h3', 'Recent reports'));
+    parts.push(...(a.reports.length ? a.reports.map((r) => {
+      const node = el('div', ''); node.className = 'report';
+      const top = el('div', ''); top.append(badge(r.status || 'unknown'), el('span', '  ' + time(r.at)), el('span', r.findings ? '  ' + r.findings + ' findings' : ''));
+      node.append(top, el('div', r.summary));
+      if (r.next_action) { const n = el('div', 'Next: ' + r.next_action); n.className = 'muted'; node.append(n); }
+      return node;
+    }) : [el('p', 'No reports yet.')]));
+    parts.push(el('h3', 'Recent events'));
+    parts.push(...(a.events.length ? a.events.map((e) => {
+      const row = el('div', ''); row.className = 'event';
+      const { at, event, role, ...rest } = e;
+      row.append(el('time', time(at)), el('strong', event + ' '), el('span', Object.entries(rest).map(([k, v]) => k + '=' + (typeof v === 'string' ? v : JSON.stringify(v))).join('  ')));
+      return row;
+    }) : [el('p', 'No recent events.')]));
+    parts.push(el('h3', 'May write'), chips(a.write_scope), el('h3', 'Triggered by'), chips(a.triggers), el('h3', 'Never does'), chips(a.prohibitions));
+    detail.replaceChildren(...parts);
+  }
+
+  async function loadAgents() { agentData = await window.team.agents(); renderAgents(); }
+
+  let currentTab = 'status';
+  document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => {
+    currentTab = b.dataset.tab;
+    document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('active', x === b));
+    for (const id of ['status', 'board', 'agents']) document.getElementById(id).classList.toggle('hidden', currentTab !== id);
+    if (currentTab === 'board') loadBoard();
+    if (currentTab === 'agents') loadAgents();
+  }));
+  setInterval(() => { if (currentTab === 'agents') loadAgents(); }, 5000);
+
   refresh();
+  loadBoard();
   setInterval(refresh, 5000);
+  setInterval(loadBoard, 15000);
 </script>
 </body>
 </html>
