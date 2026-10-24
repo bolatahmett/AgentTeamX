@@ -19,7 +19,8 @@
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; }
   dl { margin:0; display:grid; grid-template-columns:120px 1fr; gap:6px 10px; }
   dt { color:var(--muted); } dd { margin:0; word-break:break-word; }
-  .event { padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .event { padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; word-break:break-word; }
+  .event.live strong { color:var(--teal); }
   .event time { color:var(--muted); margin-right:8px; }
   pre { white-space:pre-wrap; font-size:12px; color:var(--muted); margin:12px 0 0; }
 </style>
@@ -45,11 +46,11 @@
     const fields = document.getElementById('fields');
     fields.replaceChildren(...SHOWN.filter((k) => data.fields[k]).flatMap((k) => [el('dt', k), el('dd', data.fields[k])]));
     document.getElementById('dot').className = 'dot ' + (data.fields.controller_alive === 'True' ? 'on' : 'off');
-    document.getElementById('events').replaceChildren(...data.events.map((e) => {
-      const row = el('div', ''); row.className = 'event';
+    document.getElementById('events').replaceChildren(...[...data.steps, ...data.events].map((e) => {
+      const row = el('div', ''); row.className = e.event === 'worker_step' ? 'event live' : 'event';
       const { at, event, ...rest } = e;
       row.append(el('time', (at || '').replace('T', ' ').slice(0, 19)), el('strong', event + ' '),
-        el('span', JSON.stringify(rest).slice(0, 220)));
+        el('span', Object.entries(rest).map(([k, v]) => k + '=' + (typeof v === 'string' ? v : JSON.stringify(v))).join('  ')));
       return row;
     }));
   }

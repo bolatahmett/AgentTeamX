@@ -38,9 +38,75 @@ function recentEvents(limit) {
   }
 }
 
+// Same classification as dashboard.command_label: shell text becomes a fixed label.
+const COMMAND_LABELS = [
+  [['write_text', 'apply_patch', 'set-content', 'writefile'], 'Update source / test artifacts'],
+  [['verify-project-language'], 'Project language / UTF-8 checks'],
+  [['git diff --check'], 'Whitespace checks'],
+  [['browser-probe', 'playwright', 'puppeteer', 'chrome', 'isolation_probe'], 'Browser journey / session isolation'],
+  [['bootstrap.ps1', 'serve-loopback', 'run-probe.ps1'], 'Build/start local acceptance environment'],
+  [['typecheck'], 'TypeScript checks'],
+  [['lint'], 'Lint checks'],
+  [['pnpm build', 'pnpm --filter @afterdark/web build', 'pnpm --filter @afterdark/api build'], 'Application build'],
+  [['i18n.test'], 'Translation regression tests'],
+  [['node --test', 'pnpm test', '.test.mjs', 'unittest'], 'Automated regression tests'],
+  [['pnpm install', 'npm install', 'pip install'], 'Prepare local dependencies'],
+  [['get-content', 'read_text', 'rg ', 'cat ', 'sed -n', 'grep '], 'Inspect source / project instructions'],
+  [['git status', 'git diff', 'rev-parse', 'git log'], 'Inspect source revision / changes'],
+];
+
+function commandLabel(command) {
+  const text = String(command || '').toLowerCase();
+  const hit = COMMAND_LABELS.find(([needles]) => needles.some((n) => text.includes(n)));
+  return hit ? hit[1] : 'Local diagnostic / tool command';
+}
+
+function toolLabel(name, input) {
+  input = input || {};
+  if (name === 'Bash' || name === 'PowerShell') return commandLabel(input.command);
+  const file = input.file_path || input.notebook_path || input.path;
+  if (file) return path.basename(String(file));
+  if (input.pattern) return 'pattern';
+  return '';
+}
+
+// Live worker steps from the active role log. Like dashboard.py, raw shell text is never shown.
+function workerSteps(limit) {
+  try {
+    const runtime = path.join(PROJECT, '.supervisor', 'team-v2');
+    const state = JSON.parse(fs.readFileSync(path.join(runtime, 'state.json'), 'utf8'));
+    if (!state.active_role || !state.active_log) return [];
+    const log = path.resolve(PROJECT, state.active_log);
+    if (!log.startsWith(path.join(runtime, 'logs') + path.sep)) return [];
+    const stat = fs.statSync(log);
+    const size = Math.min(stat.size, 262144);
+    const buffer = Buffer.alloc(size);
+    const fd = fs.openSync(log, 'r');
+    fs.readSync(fd, buffer, 0, size, stat.size - size);
+    fs.closeSync(fd);
+    const at = stat.mtime.toISOString();
+    const steps = new Map();
+    for (const line of buffer.toString('utf8').split(/\r?\n/)) {
+      let e; try { e = JSON.parse(line); } catch { continue; }
+      if (e.item && e.item.type === 'command_execution') {
+        const status = e.item.status || (e.type === 'item.started' ? 'in_progress' : 'completed');
+        steps.set(e.item.id || String(steps.size), { at, event: 'worker_step', role: state.active_role, tool: 'shell', step: commandLabel(e.item.command), status });
+      } else if (e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
+        for (const c of e.message.content) {
+          if (c.type !== 'tool_use') continue;
+          steps.set(c.id, { at, event: 'worker_step', role: state.active_role, tool: c.name, step: toolLabel(c.name, c.input) });
+        }
+      }
+    }
+    return [...steps.values()].slice(-limit).reverse();
+  } catch {
+    return [];
+  }
+}
+
 ipcMain.handle('status', async () => {
   const result = await run('python', ['team.py', 'status']);
-  return { ok: result.ok, fields: parseStatus(result.output), raw: result.output, events: recentEvents(25) };
+  return { ok: result.ok, fields: parseStatus(result.output), raw: result.output, steps: workerSteps(15), events: recentEvents(100) };
 });
 
 ipcMain.handle('action', async (_event, name) => {
