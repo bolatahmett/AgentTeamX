@@ -1,0 +1,13 @@
+{
+  "name": "agentteamx-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin Electron shell over team.py and Team.ps1",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "33.2.1"
+  }
+}

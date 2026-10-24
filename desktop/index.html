@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>AgentTeamX</title>
+<style>
+  :root { --bg:#0f1417; --panel:#172026; --line:#26333b; --text:#e3eaee; --muted:#8a9aa3; --teal:#5fc4b8; --bad:#e2766b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 "Segoe UI",sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); }
+  h1 { font-size:16px; margin:0; flex:1; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--muted); }
+  .dot.on { background:var(--teal); } .dot.off { background:var(--bad); }
+  button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 14px; cursor:pointer; }
+  button:hover { border-color:var(--teal); } button:disabled { opacity:.5; cursor:wait; }
+  main { display:grid; grid-template-columns:360px 1fr; gap:16px; padding:16px 20px; height:calc(100vh - 57px); }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; overflow:auto; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; }
+  dl { margin:0; display:grid; grid-template-columns:120px 1fr; gap:6px 10px; }
+  dt { color:var(--muted); } dd { margin:0; word-break:break-word; }
+  .event { padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .event time { color:var(--muted); margin-right:8px; }
+  pre { white-space:pre-wrap; font-size:12px; color:var(--muted); margin:12px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot" class="dot"></span>
+  <h1>AgentTeamX</h1>
+  <button data-action="start">Start / Resume</button>
+  <button data-action="retry">Retry</button>
+  <button data-action="stop">Stop</button>
+</header>
+<main>
+  <section><h2>Status</h2><dl id="fields"></dl><pre id="output"></pre></section>
+  <section><h2>Recent events</h2><div id="events"></div></section>
+</main>
+<script>
+  const SHOWN = ['controller_status', 'stage', 'active_role', 'task', 'calls', 'reason', 'last_summary', 'updated'];
+  const el = (tag, text) => { const node = document.createElement(tag); node.textContent = text; return node; };
+
+  async function refresh() {
+    const data = await window.team.status();
+    const fields = document.getElementById('fields');
+    fields.replaceChildren(...SHOWN.filter((k) => data.fields[k]).flatMap((k) => [el('dt', k), el('dd', data.fields[k])]));
+    document.getElementById('dot').className = 'dot ' + (data.fields.controller_alive === 'True' ? 'on' : 'off');
+    document.getElementById('events').replaceChildren(...data.events.map((e) => {
+      const row = el('div', ''); row.className = 'event';
+      const { at, event, ...rest } = e;
+      row.append(el('time', (at || '').replace('T', ' ').slice(0, 19)), el('strong', event + ' '),
+        el('span', JSON.stringify(rest).slice(0, 220)));
+      return row;
+    }));
+  }
+
+  document.querySelectorAll('button[data-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const name = button.dataset.action;
+      if (name === 'stop' && !confirm('Stop the team? Running work is preserved.')) return;
+      document.querySelectorAll('button').forEach((b) => (b.disabled = true));
+      const result = await window.team.action(name);
+      document.getElementById('output').textContent = result.output.slice(-2000);
+      document.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      refresh();
+    });
+  });
+
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>
