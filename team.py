@@ -826,7 +826,9 @@ class Team:
                 wait=min(wait*2**(strikes-1),self.config.get('claude_quota_max_cooldown_seconds',14400))
             resets=getattr(self,'quota_resets_at',None) if engine=='claude' else None
             self.quota_resets_at=None
-            if resets and resets>now:wait=resets-now+60
+            # Trust the window reset the API named over the blind backoff. A reset already in the past means the
+            # window just rolled over (seen 2026-10-23: rejected at 20:01 with resetsAt 20:00, then parked for 4 hours).
+            if resets:wait=resets-now+60 if resets>now else self.config.get('claude_quota_stale_reset_seconds',600)
             engines[engine]={'exhausted_at':stamp(),'retry_after':now+wait,'marked_at':now,'strikes':strikes}
         else:engines.pop(engine,None)
         self.persist(engines=engines)
@@ -1098,7 +1100,7 @@ class Team:
         elif pending:forced='a QA continuation has pending scenarios'
         else:forced=None
         ui=qa_tiers.ui_digest(current['files'],cfg.get('ui_paths') or ['apps/web/'])
-        tier,reason=qa_tiers.classify(self.state.get('last_qa_pass'),current['scopes'],ui,forced)
+        tier,reason=qa_tiers.classify(self.state.get('last_qa_pass'),current['scopes'],ui,forced,taskless=not task and not batch.get('tasks') and not batch.get('acceptance_tasks'))
         if source_only and tier==2:tier,reason=1,'source_only mode ('+reason+'); browser acceptance deferred'
         info={'tier':tier,'reason':reason,'snapshot':current['fingerprint'],'at':stamp()}
         self.event('qa_tier_selected',tier=tier,reason=reason)
@@ -1299,7 +1301,7 @@ class Team:
                             quota=True
                             # The account states its own reset; trust it over the strike back-off.
                             resets=(event.get('rate_limit_info') or {}).get('resetsAt')
-                            if isinstance(resets,(int,float)) and resets>time.time():self.quota_resets_at=float(resets)
+                            if isinstance(resets,(int,float)) and resets>0:self.quota_resets_at=float(resets)
                         if kind=='result':
                             terminal=now
                             if event.get('is_error') or event.get('subtype')!='success':

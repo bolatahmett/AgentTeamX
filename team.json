@@ -194,7 +194,9 @@
     "T103C",
     "T103D",
     "T103",
-    "T138"
+    "T138",
+    "T142",
+    "T143"
   ],
   "auto_batch_size": 1,
   "autonomous_discovery": {

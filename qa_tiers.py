@@ -24,13 +24,17 @@ def ui_digest(files, prefixes):
     return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
 
-def classify(last, scopes, ui, forced=None):
+def classify(last, scopes, ui, forced=None, taskless=False):
     """Return (tier, reason): 0 unchanged, 1 non-UI application change, 2 needs browser acceptance."""
     if forced:
         return 2, forced
     if (not isinstance(last, dict) or not isinstance(last.get('scopes'), dict)
             or not last['scopes'].get('application') or last.get('ui') is None):
         return 2, 'no comparable previous QA pass'
+    if (taskless and last['scopes'].get('environment') != scopes.get('environment')
+            and last['scopes'].get('application') == scopes.get('application') and last['ui'] == ui):
+        # Only task/contract documents moved and no task awaits acceptance: source checks suffice, no browser turn.
+        return 1, 'task-less housekeeping: only acceptance-contract documents changed'
     if last['scopes'].get('environment') != scopes.get('environment'):
         return 2, 'acceptance contract or environment files changed'
     if last['ui'] != ui:

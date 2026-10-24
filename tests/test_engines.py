@@ -382,5 +382,17 @@ class EngineTests(unittest.TestCase):
         capped = self.controller.state['engines']['claude']['retry_after'] - time.time()
         self.assertLessEqual(capped, 14400 + 5)
 
+    def test_past_claude_reset_time_retries_soon_instead_of_backing_off(self):
+        for _ in range(4):
+            self.controller.mark_engine('claude', True)
+        self.controller.quota_resets_at = time.time() - 105
+        self.controller.mark_engine('claude', True)
+        wait = self.controller.state['engines']['claude']['retry_after'] - time.time()
+        self.assertLessEqual(wait, 600 + 5)
+        self.controller.quota_resets_at = time.time() + 1200
+        self.controller.mark_engine('claude', True)
+        wait = self.controller.state['engines']['claude']['retry_after'] - time.time()
+        self.assertTrue(1200 < wait <= 1265)
+
 if __name__ == '__main__':
     unittest.main()

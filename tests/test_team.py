@@ -716,6 +716,8 @@ class TeamTests(unittest.TestCase):
 
     def test_failed_cli_turn_rejects_even_valid_output_report(self):
         self.worker_metadata()
+        # This exercises the Codex CLI path; the owner's team.json is Claude-only.
+        self.controller.config.update(engines=list(team.ENGINES), primary_engine='codex', role_engines={})
         fake = unittest.mock.MagicMock()
         fake.pid = 123456
         fake.stdout = io.StringIO('{"type":"turn.failed","error":{"message":"fixture failure"}}\n')

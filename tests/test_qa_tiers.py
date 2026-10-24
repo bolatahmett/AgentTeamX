@@ -69,6 +69,9 @@ class PureHelperTests(unittest.TestCase):
         self.assertEqual(cls(self.last(), self.scopes(env='f'), 'u')[0], 2)
         self.assertEqual(cls(self.last(), self.scopes(), 'u', 'forced')[0], 2)
         self.assertEqual(cls({'scopes': {}, 'ui': 'u'}, self.scopes(), 'u')[0], 2)
+        self.assertEqual(cls(self.last(), self.scopes(env='f'), 'u', None, True)[0], 1)
+        self.assertEqual(cls(self.last(), self.scopes(env='f', app='b'), 'u', None, True)[0], 2)
+        self.assertEqual(cls(self.last(), self.scopes(env='f'), 'u', 'forced', True)[0], 2)
 
     def test_ui_digest_tracks_only_configured_prefixes(self):
         files = {'apps/web/a.tsx': '1', 'apps/api/b.ts': '2'}
