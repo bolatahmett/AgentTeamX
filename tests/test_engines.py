@@ -163,24 +163,22 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.engine_candidates('qa')
 
-    def test_owner_split_runs_build_and_review_roles_on_claude_and_rest_on_codex(self):
-        # Owner UX update 2026-10-20: the developer is Codex-first (gpt-6.1-sol); review and lead stay Claude-first.
-        self.assertEqual(self.owner_role_engines, {'technical_lead': 'claude', 'code_reviewer': 'claude'})
+    def test_owner_routing_runs_all_roles_on_codex_first(self):
+        self.assertEqual(self.owner_role_engines, {role: 'codex' for role in team.ROLES})
         self.controller.config['role_engines'] = self.owner_role_engines
         for role in team.ROLES:
-            expected = ['claude', 'codex'] if role in self.owner_role_engines else ['codex', 'claude']
-            self.assertEqual(self.controller.engine_candidates(role), expected, role)
-        # A Claude-preferred role still falls back to Codex when Claude's plan is exhausted.
+            self.assertEqual(self.controller.engine_candidates(role), ['codex', 'claude'], role)
+        # A Codex-preferred role still falls back to Claude when the Codex plan is exhausted.
         calls = []
         def fake(role, engine):
             calls.append(engine)
-            if engine == 'claude':
+            if engine == 'codex':
                 raise RuntimeError('QUOTA_LIMIT: wait')
             return report()
         with patch.object(self.controller, 'run_worker_engine', side_effect=fake):
             self.assertEqual(self.controller.run_worker('code_reviewer')['status'], 'passed')
-        self.assertEqual(calls, ['claude', 'codex'])
-        self.assertIn('claude', self.controller.state['engines'])
+        self.assertEqual(calls, ['codex', 'claude'])
+        self.assertIn('codex', self.controller.state['engines'])
 
     # ---- Claude command ----
     def test_qa_may_poll_loopback_but_keeps_git_and_gh_denies(self):

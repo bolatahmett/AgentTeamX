@@ -204,7 +204,15 @@ function agentDetails() {
 }
 
 ipcMain.handle('agents', async () => agentDetails());
-ipcMain.handle('tasks', async () => ({ statuses: BOARD_STATUSES, rows: boardRows() }));
+// The controller does not rewrite row status while it works, so the board overlays the live batch.
+function liveWork() {
+  const state = readJson(path.join(RUNTIME, 'state.json'), {});
+  if (state.controller_status !== 'running' || !state.task) return { tasks: [], role: '', stage: '' };
+  const batch = (state.delivery_batch && Array.isArray(state.delivery_batch.tasks)) ? state.delivery_batch.tasks : [];
+  return { tasks: [...new Set([state.task, ...batch])], role: state.active_role || '', stage: state.stage || '' };
+}
+
+ipcMain.handle('tasks', async () => ({ statuses: BOARD_STATUSES, rows: boardRows(), live: liveWork() }));
 ipcMain.handle('setStatus', async (_event, id, status) => {
   try { return setTaskStatus(id, status); } catch (error) { return { ok: false, output: String(error.message || error) }; }
 });

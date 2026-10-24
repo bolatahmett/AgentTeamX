@@ -41,11 +41,11 @@
   "delivery_epoch": "focused-delivery-2026-10-18",
   "max_calls_per_release_recovery": 40,
   "engine_failover": true,
-  "primary_engine": "claude",
+  "primary_engine": "codex",
   "role_engines": {
-    "technical_lead": "claude",
-    "code_reviewer": "claude",
-    "ux_reviewer": "claude",
+    "technical_lead": "codex",
+    "code_reviewer": "codex",
+    "ux_reviewer": "codex",
     "developer": "codex",
     "qa": "codex",
     "planner": "codex",
@@ -155,44 +155,44 @@
   },
   "role_models": {
     "operations": {
-      "model": "gpt-6-luna",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "low"
     },
     "devops": {
-      "model": "gpt-6-luna",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "medium"
     },
     "planner": {
-      "model": "gpt-6-sol",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "low"
     },
     "ux_reviewer": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-5.6-sol",
       "reasoning_effort": "medium"
     },
     "qa": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "medium"
     },
     "environment_engineer": {
-      "model": "gpt-6-sol",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "medium"
     },
     "developer": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "medium"
     },
     "code_reviewer": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-5.6-terra",
       "reasoning_effort": "medium"
     },
     "technical_lead": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-5.6-luna",
       "reasoning_effort": "medium"
     }
   },
   "release_diagnostic_model": {
-    "model": "gpt-6.1-sol",
+    "model": "gpt-5.6-luna",
     "reasoning_effort": "medium"
   },
   "qa_acceptance_tasks": [

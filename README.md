@@ -36,12 +36,11 @@ may change its own policy, controller locks, STOP state, Git history or producti
 The supervisor is ordinary deterministic code, not another paid model invocation.
 Owner-approved role_models in team.json selects each worker's explicit CLI model
 and reasoning effort; unspecified policies retain the configured CLI default.
-Operations uses gpt-6-luna/low, routine DevOps gpt-6-luna/medium and UX review
-gpt-6-luna/medium. Planner uses gpt-6-sol/low; QA and environment preparation use
-gpt-6-sol/medium. Developer and code review use gpt-6.1-sol/medium; technical
-diagnosis uses gpt-6.1-sol/high. Active release-incident DevOps uses the stronger
-release_diagnostic_model because production failure diagnosis is not a routine
-checklist. Models and efforts were checked against the local CLI model catalog.
+Developer uses gpt-5.6-luna/medium, code review uses gpt-5.6-terra/medium and UX
+review uses gpt-5.6-sol/medium. All other roles use gpt-5.6-luna with their
+role-specific reasoning effort. Active release-incident DevOps also uses
+gpt-5.6-luna/medium through release_diagnostic_model. Models and efforts were
+checked against the local CLI model catalog.
 These are task-fit choices, not a measured cost-saving percentage or quality
 guarantee. Gate schemas, source provenance, budgets and authorization are unchanged.
 worker_model_selected events and active_model record the requested routing.
@@ -388,17 +387,10 @@ waiting stage and no manual retry. When Claude is exhausted the work goes back t
 Codex, whichever has quota. Only when both are exhausted does the existing
 waiting_for_quota stage apply.
 
-Owner UX update - 2026-10-20: the developer is Codex-first again so the UX modernization
-queue (T88-T103) runs on `gpt-6.1-sol`; QA and ux_reviewer also use `gpt-6.1-sol`;
-`auto_batch_size` is 1 so pages are delivered one at a time; T103 is the verification-only
-QA row. Completed rows were archived to docs/history/tasks-archive-20261020.md.
-
-Owner role split - 2026-10-19: `role_engines` makes developer, technical_lead and
-code_reviewer Claude-first; all other roles stay Codex-first. The split applies while
-both engines have quota; a Claude-first role falls back to Codex on Claude plan
-exhaustion and vice versa. Claude effort follows `role_models` (developer and
-code_reviewer medium, technical_lead high). code_reviewer and Codex-run QA therefore
-use different engines for review and verification.
+Owner model routing update - 2026-10-25: every role is Codex-first. Developer uses
+`gpt-5.6-luna`, code_reviewer uses `gpt-5.6-terra`, ux_reviewer uses `gpt-5.6-sol`,
+and every other role uses `gpt-5.6-luna`. Claude remains the quota failover engine
+and takes the configured reasoning effort from the corresponding role policy.
 
 Return to Codex: an exhausted Codex is re-probed at most every `codex_probe_seconds`
 (300) through the account limit endpoint, without a model turn; positive evidence

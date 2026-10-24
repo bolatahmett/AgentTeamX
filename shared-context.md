@@ -1,6 +1,6 @@
 # Shared project and operational context
 
-## Owner-approved batch delivery and role models - 2026-10-18
+## Owner-approved batch delivery and role models - 2026-10-25
 
 context.delivery_batch identifies the only jointly assigned source tasks and
 eligible delivered acceptance scenarios. Implement all ready source members
@@ -12,10 +12,11 @@ Later single-task focused-delivery examples do not override this batch policy.
 
 The controller selects explicit model and reasoning settings per role using
 team.json; workers must not change their model, sandbox or spawn another worker.
-Routine observations use smaller models; source/security review and difficult
-diagnosis retain stronger models. Model choice never changes acceptance gates.
+Developer uses GPT-5.6 Luna, code review uses GPT-5.6 Terra, UX review uses
+GPT-5.6 Sol, and all other roles use GPT-5.6 Luna. Model choice never changes
+acceptance gates.
 
-Updated: 2026-10-18. This is the reviewed team handoff, not a substitute for live
+Updated: 2026-10-25. This is the reviewed team handoff, not a substitute for live
 inspection. Read current AGENTS.md and the task brief; look up agent.md, tasks.md, writing-block.md and
 docs/product/product-delivery.md by targeted search only. Current owner instructions and verified current
 state supersede old reports. Do not copy global memories or sensitive credentials
