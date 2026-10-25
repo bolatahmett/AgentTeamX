@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'unsafe-inline'">
 <title>AgentTeamX</title>
 <style>
   :root { --bg:#0f1417; --panel:#172026; --line:#26333b; --text:#e3eaee; --muted:#8a9aa3; --teal:#5fc4b8; --bad:#e2766b; }
@@ -60,13 +60,24 @@
   .card select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:4px; font-size:11px; }
   .card pre { display:none; max-height:260px; overflow:auto; }
   .card.open pre { display:block; }
+  body:has(#approvals:not(.hidden)) { height:100vh; display:flex; flex-direction:column; overflow:auto; }
+  #approvals { padding:16px 20px; display:flex; flex-direction:column; gap:14px; }
+  .ap { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .ap h3 { margin:0 0 6px; font-size:15px; } .ap h3 .id { color:var(--teal); margin-right:6px; }
+  .ap p { margin:6px 0; } .ap textarea { width:100%; min-height:60px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; }
+  .ap .actions { display:flex; gap:8px; margin-top:8px; align-items:center; }
+  .ap .approve { border-color:var(--teal); color:var(--teal); } .ap .reject { border-color:var(--bad); color:var(--bad); }
+  .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:8px; margin-top:8px; }
+  .shots figure { margin:0; } .shots img { width:100%; border:1px solid var(--line); border-radius:4px; cursor:zoom-in; } .shots figcaption { font-size:11px; color:var(--muted); }
+  #lightbox { position:fixed; inset:0; background:rgba(0,0,0,.88); display:flex; align-items:center; justify-content:center; z-index:9; cursor:zoom-out; }
+  #lightbox img { max-width:96vw; max-height:96vh; }
 </style>
 </head>
 <body>
 <header>
   <span id="dot" class="dot"></span>
   <h1>AgentTeamX</h1>
-  <nav><button data-tab="status" class="active">Status</button><button data-tab="board">Board</button><button data-tab="agents">Agents</button></nav>
+  <nav><button data-tab="status" class="active">Status</button><button data-tab="board">Board</button><button data-tab="agents">Agents</button><button data-tab="approvals">Approvals <span id="apCount" class="badge hidden"></span></button></nav>
   <button data-action="start">Start / Resume</button>
   <button data-action="retry">Retry</button>
   <button data-action="stop">Stop</button>
@@ -83,6 +94,7 @@
   <div class="toolbar"><input id="filter" placeholder="Filter by ID or title"><label><input type="checkbox" id="showArchived"> Show archived done</label><span id="boardMsg"></span></div>
   <div class="columns" id="columns"></div>
 </div>
+<div id="approvals" class="hidden"></div>
 <script>
   const SHOWN = ['controller_status', 'stage', 'active_role', 'task', 'calls', 'reason', 'last_summary', 'updated'];
   const el = (tag, text) => { const node = document.createElement(tag); node.textContent = text; return node; };
@@ -228,18 +240,84 @@
 
   async function loadAgents() { agentData = await window.team.agents(); renderAgents(); }
 
+  const decisionLabel = { approve: 'Approved', reject: 'Rejected', comment: 'Comment' };
+  let approvalData = [];
+  const typing = () => document.activeElement && document.activeElement.tagName === 'TEXTAREA';
+
+  async function loadApprovals(force) {
+    if (!force && typing()) return;
+    approvalData = await window.team.approvals();
+    const count = document.getElementById('apCount');
+    count.textContent = String(approvalData.length); count.classList.toggle('hidden', !approvalData.length);
+    if (currentTab === 'approvals') renderApprovals();
+  }
+
+  function renderApprovals() {
+    const root = document.getElementById('approvals');
+    const drafts = {};
+    root.querySelectorAll('textarea').forEach((t) => { drafts[t.dataset.id] = t.value; });
+    if (!approvalData.length) { root.replaceChildren(el('p', 'Nothing is waiting for an owner decision.')); return; }
+    root.replaceChildren(...approvalData.map((a) => {
+      const box = el('div', ''); box.className = 'ap';
+      const h = el('h3', ' ' + a.title); const id = el('span', a.id); id.className = 'id'; h.prepend(id); h.append(badge(a.status, ''));
+      box.append(h);
+      if (a.acceptance) box.append(el('p', a.acceptance));
+      if (a.latest) { const l = el('p', a.latest.slice(0, 700)); l.className = 'muted'; box.append(l); }
+      if (a.shots.length) {
+        const det = el('details', ''); det.append(el('summary', 'Screenshots (' + a.shots.length + ')'));
+        const grid = el('div', ''); grid.className = 'shots'; det.append(grid);
+        det.addEventListener('toggle', async () => {
+          if (!det.open || grid.childElementCount) return;
+          for (const f of a.shots.slice(0, 40)) {
+            const fig = el('figure', ''); const img = document.createElement('img');
+            img.src = await window.team.approvalImage(a.id, f); img.alt = f; img.addEventListener('click', () => showImage(img.src));
+            fig.append(img, el('figcaption', f)); grid.append(fig);
+          }
+        });
+        box.append(det);
+      }
+      const text = document.createElement('textarea'); text.dataset.id = a.id; text.placeholder = 'Comment (required for Reject and Send comment)'; text.value = drafts[a.id] || '';
+      const msg = el('span', ''); msg.className = 'muted';
+      const send = async (decision) => {
+        const result = await window.team.decide(a.id, decision, text.value);
+        msg.textContent = result.output;
+        if (result.ok) { text.value = ''; loadApprovals(true); }
+      };
+      const actions = el('div', ''); actions.className = 'actions';
+      for (const [d, label, cls] of [['approve', 'Approve', 'approve'], ['reject', 'Reject', 'reject'], ['comment', 'Send comment', '']]) {
+        const b = el('button', label); b.className = cls; b.addEventListener('click', () => send(d)); actions.append(b);
+      }
+      actions.append(msg);
+      box.append(text, actions);
+      if (a.history.length) {
+        box.append(el('h2', 'Your decisions'));
+        a.history.slice(0, 5).forEach((d) => { const r = el('div', ''); r.className = 'report'; r.append(badge(decisionLabel[d.decision] || d.decision, d.decision === 'approve' ? 'passed' : d.decision === 'reject' ? 'failed' : ''), el('span', '  ' + time(d.at) + (d.comment ? '  ' + d.comment : ''))); box.append(r); });
+      }
+      return box;
+    }));
+  }
+
+  function showImage(src) {
+    const box = document.createElement('div'); box.id = 'lightbox';
+    const img = document.createElement('img'); img.src = src; box.append(img);
+    box.addEventListener('click', () => box.remove()); document.body.append(box);
+  }
+
   let currentTab = 'status';
   document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => {
     currentTab = b.dataset.tab;
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('active', x === b));
-    for (const id of ['status', 'board', 'agents']) document.getElementById(id).classList.toggle('hidden', currentTab !== id);
+    for (const id of ['status', 'board', 'agents', 'approvals']) document.getElementById(id).classList.toggle('hidden', currentTab !== id);
     if (currentTab === 'board') loadBoard();
     if (currentTab === 'agents') loadAgents();
+    if (currentTab === 'approvals') loadApprovals(true);
   }));
   setInterval(() => { if (currentTab === 'agents') loadAgents(); }, 5000);
 
+  setInterval(() => loadApprovals(false), 15000);
   refresh();
   loadBoard();
+  loadApprovals(true);
   setInterval(refresh, 5000);
   setInterval(loadBoard, 15000);
 </script>

@@ -23,4 +23,14 @@ class BackgroundProcessTests(unittest.TestCase):
             self.assertEqual(background.options({'cwd':'fixture'}),{'cwd':'fixture'})
 
 
+class GhExecutableTests(unittest.TestCase):
+    def test_falls_back_to_program_files_when_path_lacks_gh(self):
+        import os,tempfile
+        with tempfile.TemporaryDirectory() as root:
+            folder=os.path.join(root,'GitHub CLI');os.mkdir(folder)
+            with open(os.path.join(folder,'gh.exe'),'w',encoding='utf-8') as handle:handle.write('x')
+            with patch.object(background.shutil,'which',return_value=None),patch.dict(os.environ,{'ProgramFiles':root}):
+                self.assertEqual(background.gh_executable(),os.path.join(folder,'gh.exe'))
+
+
 if __name__=='__main__':unittest.main()

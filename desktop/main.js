@@ -204,6 +204,76 @@ function agentDetails() {
 }
 
 ipcMain.handle('agents', async () => agentDetails());
+// Approvals tab: open rows that wait for an owner decision. Decisions reach the team through the same
+// inbox the `team.py inbox` helper writes, and are also kept in owner-decisions.jsonl for the history.
+const INBOX = path.join(RUNTIME, 'inbox');
+const DECISIONS = path.join(RUNTIME, 'owner-decisions.jsonl');
+const OWNER_WAIT = /owner[^.;\n]{0,24}(review|approval|acceptance)/i;
+
+function decisionLog() {
+  try {
+    return fs.readFileSync(DECISIONS, 'utf8').split(/\r?\n/).filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+}
+
+function shotDir(id) {
+  return path.join(RUNTIME, 'artifacts', 'qa', id.toLowerCase() + '-shots');
+}
+
+function approvalItems() {
+  const log = decisionLog();
+  return parseRows(readText(TASKS), false)
+    .filter((r) => r.section !== 'Archived dependency references' && r.status !== 'done' && !r.checked)
+    .map((r) => {
+      const lines = r.body.split(/\r?\n/).map((l) => l.trim());
+      const acceptance = lines.find((l) => /^Acceptance:/i.test(l)) || '';
+      const progress = lines.filter((l) => /^Progress/i.test(l));
+      return { r, acceptance, progress };
+    })
+    .filter(({ acceptance, progress }) => OWNER_WAIT.test(acceptance) || (progress.length > 0 && OWNER_WAIT.test(progress[progress.length - 1])))
+    .map(({ r, acceptance, progress }) => {
+      let shots = [];
+      try { shots = fs.readdirSync(shotDir(r.id)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort(); } catch { /* none */ }
+      return { id: r.id, title: r.title, status: r.status, acceptance, latest: progress.length ? progress[progress.length - 1] : '',
+        shots, history: log.filter((d) => d.task === r.id).reverse() };
+    });
+}
+
+ipcMain.handle('approvals', async () => approvalItems());
+
+ipcMain.handle('approvalImage', async (_event, id, file) => {
+  try {
+    if (!/^T\d+[A-Z]?$/.test(String(id)) || path.basename(String(file)) !== file) return '';
+    const data = fs.readFileSync(path.join(shotDir(id), file));
+    const type = /\.png$/i.test(file) ? 'png' : /\.webp$/i.test(file) ? 'webp' : 'jpeg';
+    return 'data:image/' + type + ';base64,' + data.toString('base64');
+  } catch { return ''; }
+});
+
+function decisionText(id, decision, comment) {
+  const note = comment ? ' Owner comment: ' + comment : '';
+  if (decision === 'approve') return 'Owner decision for ' + id + ': the owner visual review is APPROVED (recorded in the desktop app). This satisfies only the owner-review condition; keep any other open acceptance condition open.' + note;
+  if (decision === 'reject') return 'Owner decision for ' + id + ': the owner visual review is REJECTED (recorded in the desktop app). Keep the row open and schedule repair work for the comment below; do not close the row.' + note;
+  return 'Owner comment on ' + id + ' (not an approval or rejection): ' + comment;
+}
+
+ipcMain.handle('decide', async (_event, id, decision, comment) => {
+  try {
+    comment = String(comment || '').trim().slice(0, 2000);
+    if (!/^T\d+[A-Z]?$/.test(String(id))) return { ok: false, output: 'Invalid task id' };
+    if (!['approve', 'reject', 'comment'].includes(decision)) return { ok: false, output: 'Invalid decision' };
+    if (decision !== 'approve' && !comment) return { ok: false, output: 'A comment is required' };
+    if (!approvalItems().some((i) => i.id === id)) return { ok: false, output: id + ' is not waiting for an owner decision' };
+    const at = new Date().toISOString();
+    fs.mkdirSync(INBOX, { recursive: true });
+    const name = require('crypto').randomBytes(16).toString('hex') + '.json';
+    fs.writeFileSync(path.join(INBOX, name), JSON.stringify({ source: 'owner_desktop', recorded_at: at, text: decisionText(id, decision, comment) }, null, 2), 'utf8');
+    fs.appendFileSync(DECISIONS, JSON.stringify({ at, task: id, decision, comment }) + '\n', 'utf8');
+    return { ok: true, output: id + ': ' + decision + ' sent to the team' };
+  } catch (error) { return { ok: false, output: String(error.message || error) }; }
+});
+
 // The controller does not rewrite row status while it works, so the board overlays the live batch.
 function liveWork() {
   const state = readJson(path.join(RUNTIME, 'state.json'), {});

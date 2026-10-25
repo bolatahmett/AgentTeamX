@@ -9,7 +9,7 @@ import queue
 import re
 import shutil
 import subprocess
-from background_process import run as background_run, popen as background_popen
+from background_process import run as background_run, popen as background_popen, gh_executable
 import sys
 import threading
 import time
@@ -78,7 +78,7 @@ GH_DENIED = ('Bash(gh auth *)','Bash(gh api *)','Bash(gh pr *)','Bash(gh repo *)
 
 def failed_run_log(run):
     """Read-only failed-step log of one GitHub Actions run, using the existing gh login."""
-    result=background_run(['gh','run','view',str(run),'--repo','bolatahmett/AfterDark','--log-failed'],
+    result=background_run([gh_executable(),'run','view',str(run),'--repo','bolatahmett/AfterDark','--log-failed'],
                           capture_output=True,timeout=90,encoding='utf-8',errors='replace')
     if result.returncode==0:return result.stdout
     return 'gh exit '+str(result.returncode)+'\n'+(result.stderr or '')[-4000:]
@@ -1222,7 +1222,18 @@ class Team:
         progress=self.matching_qa_progress()
         return bool(self.state.get('task') in self.config.get('qa_acceptance_tasks',[]) or
                     (self.state.get('delivery_batch') or {}).get('acceptance_tasks') or (progress and progress.get('remaining')) or
-                    self.uncommitted_ui_change(cfg))
+                    self.uncommitted_ui_change(cfg) or self.committed_ui_tier(cfg))
+
+    def committed_ui_tier(self,cfg):
+        """A committed UI change since the last QA pass also selects the browser tier; without a controller-owned
+        runtime the suite fast path would run with an empty URL and every scenario would be skipped."""
+        if not self.state.get('task') or not cfg.get('suites',True):return False
+        try:
+            current=snapshot(self.project)
+            ui=qa_tiers.ui_digest(current['files'],cfg.get('ui_paths') or ['apps/web/'])
+            tier,_=qa_tiers.classify(self.state.get('last_qa_pass'),current['scopes'],ui,None,taskless=False)
+        except Exception:return False
+        return tier==2
 
     def uncommitted_ui_change(self,cfg):
         """A task with uncommitted UI-path edits needs browser acceptance, so QA must get the controller-owned runtime
@@ -2218,7 +2229,9 @@ class Team:
             elif git(self.project,'status','--porcelain'):
                 # Owner-selected (2026-10-20): closed acceptance rows and other local changes are delivered
                 # through the normal gates instead of waiting uncommitted while the queue is empty.
-                self.persist(stage='code_reviewer',task=None,delivery_batch=None,receipts={},attempts=0,
+                # A parked (not schedulable) open row still owns the dirty work. Keeping it as the task gives QA the
+                # controller-owned runtime and a concrete row; a taskless QA turn can only report "nothing assigned".
+                self.persist(stage='code_reviewer',task=raw[0] if raw else None,delivery_batch=None,receipts={},attempts=0,
                              reason='No ready work; delivering pending local changes through the review gates')
                 stage='code_reviewer'
             elif self.config.get('ux_review_enabled',True) and self.state.get('last_ux_snapshot')!=current['fingerprint'] and time.time()-self.state.get('last_ux_at',0)>=self.config['ux_interval_hours']*3600:
@@ -2226,6 +2239,13 @@ class Team:
             elif self.discovery_due():
                 self.start_discovery();stage=self.state['stage']
             else:self.persist(stage='idle',reason='No ready work; waiting for evidence, new owner input or the next discovery pass');return
+        if stage=='qa' and not self.state.get('task') and not self.exploring():
+            # A taskless QA turn can only report "nothing assigned" and no runtime starts. Adopt the first open row
+            # so state persisted before the routing repair still reaches a concrete acceptance assignment.
+            open_rows=backlog(self.project)[1]
+            if open_rows:
+                self.persist(task=open_rows[0],reason='QA turn had no task; adopted open row '+open_rows[0])
+                self.event('qa_task_adopted',task=open_rows[0])
         if stage in GATES and not (stage=='qa' and self.exploring()) and gate_valid(self.state.get('receipts',{}).get(stage),stage,current):
             index=GATES.index(stage)
             self.persist(stage=GATES[index+1] if index+1<len(GATES) else 'ready_for_commit',reason='Reused unchanged scoped '+stage+' evidence')

@@ -335,6 +335,24 @@ class TeamTests(unittest.TestCase):
         self.assertNotIn('planner', self.roles)
         self.assertNotIn('developer', self.roles)
 
+    def test_pending_changes_with_only_parked_row_keep_that_row_as_task(self):
+        self.write('tasks.md', '- [ ] **T1 - Parked work** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Parked row')
+        self.controller.initialize()
+        self.controller.persist(parked_tasks={'T1': {'at': team.stamp(), 'retry_at': time.time() + 3600, 'reason': 'parked'}})
+        self.write('dirty.txt', 'pending\n')
+        self.controller.step()
+        self.assertEqual(self.roles[0], 'code_reviewer')
+        self.assertEqual(self.controller.context('code_reviewer')['task'], 'T1')
+
+    def test_taskless_qa_stage_adopts_first_open_row(self):
+        self.write('tasks.md', '- [ ] **T1 - Open work** | todo | Dependencies: None.\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'Open row')
+        self.controller.initialize()
+        self.controller.persist(stage='qa', task=None, delivery_batch=None, receipts={})
+        self.controller.step()
+        self.assertEqual(self.controller.state.get('task'), 'T1')
+
     def test_close_task_row_ignores_done_and_unknown_rows(self):
         self.write('tasks.md', '- [x] **T1 - Done** | done | Dependencies: None.\n')
         self.assertFalse(team.close_task_row(self.project, 'T1', 'note'))

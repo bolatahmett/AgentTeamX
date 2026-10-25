@@ -126,7 +126,7 @@ class ResilienceTests(unittest.TestCase):
                 c.begin_release_recovery('a'*40,'Deployment failed')
             run.assert_called_once_with('42')
             done=SimpleNamespace(returncode=0,stdout='ok',stderr='')
-            with patch.object(team,'background_run',return_value=done) as gh:
+            with patch.object(team,'background_run',return_value=done) as gh,patch.object(team,'gh_executable',return_value='gh'):
                 self.assertEqual(team.failed_run_log('42'),'ok')
             self.assertEqual(gh.call_args[0][0][:4],['gh','run','view','42'])
             self.assertIn('--log-failed',gh.call_args[0][0])

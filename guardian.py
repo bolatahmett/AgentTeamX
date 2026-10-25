@@ -5,7 +5,7 @@ import datetime as dt
 import os
 from pathlib import Path
 import subprocess
-from background_process import run as background_run, popen as background_popen
+from background_process import run as background_run, popen as background_popen, gh_executable
 import sys
 import time
 import urllib.request
@@ -32,7 +32,7 @@ def health(config):
 def workflows(commit):
     # Existing gh login only; never read or print authentication values.
     try:
-        result=background_run(['gh','run','list','--repo','bolatahmett/AfterDark','--commit',commit,
+        result=background_run([gh_executable(),'run','list','--repo','bolatahmett/AfterDark','--commit',commit,
                                '--limit','30','--json','workflowName,headSha,status,conclusion,url'],
                               capture_output=True,timeout=30,encoding='utf-8')
         if result.returncode:raise RuntimeError('GitHub workflow observation unavailable')
