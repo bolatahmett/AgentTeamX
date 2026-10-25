@@ -279,15 +279,21 @@
       const text = document.createElement('textarea'); text.dataset.id = a.id; text.placeholder = 'Comment (required for Reject and Send comment)'; text.value = drafts[a.id] || '';
       const msg = el('span', ''); msg.className = 'muted';
       const send = async (decision) => {
+        actions.querySelectorAll('button').forEach((b) => (b.disabled = true));
         const result = await window.team.decide(a.id, decision, text.value);
         msg.textContent = result.output;
-        if (result.ok) { text.value = ''; loadApprovals(true); }
+        if (result.ok) { text.value = ''; loadApprovals(true); } else actions.querySelectorAll('button').forEach((b) => (b.disabled = false));
       };
       const actions = el('div', ''); actions.className = 'actions';
       for (const [d, label, cls] of [['approve', 'Approve', 'approve'], ['reject', 'Reject', 'reject'], ['comment', 'Send comment', '']]) {
         const b = el('button', label); b.className = cls; b.addEventListener('click', () => send(d)); actions.append(b);
       }
       actions.append(msg);
+      if (a.answered) {
+        const last = a.history[0];
+        actions.querySelectorAll('button').forEach((b) => (b.disabled = true)); text.disabled = true;
+        msg.textContent = (decisionLabel[last.decision] || last.decision) + ' sent ' + time(last.at) + ' - waiting for the team';
+      }
       box.append(text, actions);
       if (a.history.length) {
         box.append(el('h2', 'Your decisions'));

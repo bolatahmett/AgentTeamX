@@ -440,6 +440,16 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(Path(paths['untracked_file']).read_text(encoding='utf-8').split(), ['new.txt'])
         self.assertFalse((self.controller.folder / 'artifacts' / 'qa' / 'review-input').exists())
 
+    def test_review_input_records_language_check_for_read_only_roles(self):
+        self.write('scripts/verify-project-language.py', 'import sys\nprint("PASS")\nsys.exit(0)\n')
+        self.controller.state['snapshot'] = team.snapshot(self.project)['fingerprint']
+        self.controller.prepare_review_input('devops')
+        paths = self.controller.context('devops')['review_input']
+        info = json.loads(Path(paths['language_check_file']).read_text(encoding='utf-8'))
+        self.assertEqual(info['exit_code'], 0)
+        self.assertIn('PASS', info['output'])
+        self.assertEqual(info['snapshot'], team.snapshot(self.project)['fingerprint'])
+
     def test_missing_model_policy_inherits_and_invalid_policy_fails(self):
         self.controller.config.pop('role_models')
         self.assertEqual(self.controller.worker_model_args('qa'), [])

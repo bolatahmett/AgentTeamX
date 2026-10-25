@@ -712,7 +712,7 @@ class Team:
         """Controller-written snapshot evidence for read-only roles whose shell cannot run the fingerprint command."""
         if role not in READ_ONLY:return None
         folder=self.folder/'artifacts'/role/'review-input'
-        return {'directory':str(folder),'snapshot_file':str(folder/'snapshot.json'),'diff_file':str(folder/'tracked.diff'),'untracked_file':str(folder/'untracked.txt')}
+        return {'directory':str(folder),'snapshot_file':str(folder/'snapshot.json'),'diff_file':str(folder/'tracked.diff'),'untracked_file':str(folder/'untracked.txt'),'language_check_file':str(folder/'language-check.json')}
 
     def prepare_review_input(self,role):
         """Write the live fingerprint, tracked diff and untracked file list so read-only workers can use file tools."""
@@ -728,8 +728,21 @@ class Team:
                 'note':'Written by the controller before this worker started; read-only workers cannot run the fingerprint command.'})
             Path(paths['diff_file']).write_text(tracked,encoding='utf-8')
             Path(paths['untracked_file']).write_text('\n'.join(untracked)+('\n' if untracked else ''),encoding='utf-8')
+            self.record_language_check(Path(paths['language_check_file']),current['fingerprint'])
         except Exception as exc:
             save(Path(paths['snapshot_file']),{'recorded_at':stamp(),'error':type(exc).__name__,'note':'Review input could not be prepared; use git diff/status directly.'})
+
+    def record_language_check(self,target,fingerprint):
+        """Run the CI language verifier for read-only roles whose shell cannot execute it; result is evidence for this snapshot only."""
+        script=self.project/'scripts'/'verify-project-language.py'
+        if not script.is_file():return
+        try:
+            p=background_run([sys.executable,'-I',str(script)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=120,cwd=str(self.project))
+            result={'exit_code':p.returncode,'output':(p.stdout+p.stderr)[-4000:]}
+        except Exception as exc:
+            result={'exit_code':None,'error':type(exc).__name__}
+        save(target,{'recorded_at':stamp(),'snapshot':fingerprint,'command':'python -I scripts/verify-project-language.py',**result,
+            'note':'Written by the controller; read-only workers cannot run the verifier. Valid only for the recorded snapshot.'})
 
     def record_tool_inventory(self):
         """Expose configured tool names without copying credentials or private config."""

@@ -106,3 +106,9 @@ source/config findings as changes_requested for developer; external missing
 permissions or credentials remain blocked. A passed diagnostic report is not a
 release approval: the controller schedules fresh required gates afterward. The
 separate persistent recovery budget covers diagnosis, repair and validation.
+
+## Controller-recorded language check
+
+Your shell is read-only. If context.review_input.language_check_file exists, read it instead of running
+`python scripts/verify-project-language.py`; exit_code 0 for the matching snapshot is a passed check. Do not block
+solely because the verifier or read-only git commands cannot run; use snapshot.json, tracked.diff and untracked.txt.

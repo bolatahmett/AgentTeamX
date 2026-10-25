@@ -221,8 +221,11 @@ function shotDir(id) {
   return path.join(RUNTIME, 'artifacts', 'qa', id.toLowerCase() + '-shots');
 }
 
+// An approval is final for the row. A rejection or comment stays pending until the team writes tasks.md again.
 function approvalItems() {
   const log = decisionLog();
+  let rowsChanged = 0;
+  try { rowsChanged = fs.statSync(TASKS).mtimeMs; } catch { /* no tasks.md */ }
   return parseRows(readText(TASKS), false)
     .filter((r) => r.section !== 'Archived dependency references' && r.status !== 'done' && !r.checked)
     .map((r) => {
@@ -233,10 +236,11 @@ function approvalItems() {
     })
     .filter(({ acceptance, progress }) => OWNER_WAIT.test(acceptance) || (progress.length > 0 && OWNER_WAIT.test(progress[progress.length - 1])))
     .map(({ r, acceptance, progress }) => {
+      const history = log.filter((d) => d.task === r.id).reverse();
       let shots = [];
       try { shots = fs.readdirSync(shotDir(r.id)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort(); } catch { /* none */ }
       return { id: r.id, title: r.title, status: r.status, acceptance, latest: progress.length ? progress[progress.length - 1] : '',
-        shots, history: log.filter((d) => d.task === r.id).reverse() };
+        shots, history, answered: history.length > 0 && (history[0].decision === 'approve' || Date.parse(history[0].at) > rowsChanged) };
     });
 }
 
@@ -264,7 +268,9 @@ ipcMain.handle('decide', async (_event, id, decision, comment) => {
     if (!/^T\d+[A-Z]?$/.test(String(id))) return { ok: false, output: 'Invalid task id' };
     if (!['approve', 'reject', 'comment'].includes(decision)) return { ok: false, output: 'Invalid decision' };
     if (decision !== 'approve' && !comment) return { ok: false, output: 'A comment is required' };
-    if (!approvalItems().some((i) => i.id === id)) return { ok: false, output: id + ' is not waiting for an owner decision' };
+    const item = approvalItems().find((i) => i.id === id);
+    if (!item) return { ok: false, output: id + ' is not waiting for an owner decision' };
+    if (item.answered) return { ok: false, output: id + ' already has a decision; waiting for the team' };
     const at = new Date().toISOString();
     fs.mkdirSync(INBOX, { recursive: true });
     const name = require('crypto').randomBytes(16).toString('hex') + '.json';
